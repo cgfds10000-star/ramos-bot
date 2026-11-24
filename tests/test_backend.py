@@ -10,6 +10,8 @@ from unittest.mock import patch
 import os
 import threading
 import http.client
+from email.message import Message
+from urllib.error import HTTPError
 
 BACKEND = Path(__file__).resolve().parents[1] / 'backend'
 sys.path.insert(0, str(BACKEND))
@@ -166,6 +168,33 @@ print(json.dumps({{"type": "done", "ok": True, "authenticated": True}}), flush=T
         self.assertEqual(request.get_header('Authorization'), 'Bearer vzs_synthetic')
         self.assertNotIn(b'vzs_synthetic', request.data)
         self.assertEqual(request.method, 'POST')
+
+    def test_viralize_distinguishes_cloudflare_denial_from_api_denial(self):
+        ray = '0123456789abcdef-GRU'
+        cases = (
+            (403, {}, {'cloudflare_error': True, 'error_code': 1010, 'ray_id': ray}, 'Cloudflare 1010', ray),
+            (403, {'CF-Mitigated': 'challenge', 'CF-Ray': ray}, '<html>Challenge</html>', 'Cloudflare', ray),
+            (403, {'CF-Ray': ray}, {'success': False}, 'HTTP 403', None),
+            (401, {}, {'success': False}, 'token do Viralize não foi aceito', None),
+            (403, {}, {'cloudflare_error': True, 'error_code': 'vzs_synthetic', 'ray_id': 'vzs_synthetic'}, 'Cloudflare', None),
+        )
+        for status, response_headers, payload, expected, shown_ray in cases:
+            with self.subTest(status=status, expected=expected, headers=response_headers):
+                service = ViralizeApi('vzs_synthetic')
+                headers = Message()
+                for name, value in response_headers.items():
+                    headers[name] = value
+                body = payload if isinstance(payload, str) else json.dumps({**payload, 'detail': 'vzs_synthetic'})
+                response = io.BytesIO(body.encode())
+                error = HTTPError('https://viralizesociais.com/api/account/ensure', status, 'Error', headers, response)
+                with patch.object(service.opener, 'open', side_effect=error) as send, self.assertRaises(ApiError) as caught:
+                    service.request('account/ensure', {'social': 'instagram', 'username': 'teste'}, write=True)
+                send.assert_called_once()
+                self.assertTrue(response.closed)
+                message = str(caught.exception)
+                self.assertIn(expected, message)
+                self.assertEqual(ray in message, shown_ray is not None)
+                self.assertNotIn('vzs_synthetic', message)
 
     def test_invalid_macro_is_not_partially_saved(self):
         with self.assertRaises(ApiError):

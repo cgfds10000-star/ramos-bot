@@ -33,6 +33,8 @@ O núcleo usa o `instagram_login_apk.py` fornecido, com `instagrapi==3.2.19`. Um
 
 O token fica em memória, é enviado por Bearer à API oficial e não é salvo nos dados ou no terminal. Só Instagram é executado nesta integração; não são postados comentários nem executadas tarefas de TikTok. O login e o 2FA existentes não mudam.
 
+Se o painel mostrar um bloqueio do Cloudflare, o fato de o site abrir no navegador não garante que o servidor do Ramos Bot consiga acessar a API. Envie o código do bloqueio e o ID da requisição, quando exibido, ao suporte do Viralize para verificar o acesso da integração. Não envie seu token ao suporte.
+
 ## Desenvolvimento
 
 ```bash

@@ -48,5 +48,5 @@
 .macro-flow-note,.macro-execution-card .macro-run-list p{color:#c9b7df;font-size:.85rem;line-height:1.4;margin:8px 0}
 .macro-task-type{display:flex;gap:10px;align-items:center;justify-content:space-between;margin:14px 0;color:#e8dcf6;font-size:.9rem}
 .macro-task-type select{min-width:0;padding:8px 28px 8px 10px;border:1px solid #67477e;border-radius:8px;color:#f4eaff;background-color:#211333}
-.macro-run-list{list-style:none;padding:0;margin:0}.macro-run-list li{margin-top:12px;padding:10px 0;border-top:1px solid #604371}
+.macro-run-list{grid-column:1/-1;min-width:0;list-style:none;padding:0;margin:0;overflow-wrap:anywhere}.macro-run-list li{margin-top:12px;padding:10px 0;border-top:1px solid #604371}
 .macro-run-list .text-button{padding:5px 9px;border:1px solid #7a5592;border-radius:7px;color:#edd3ff;background:#2e1743}

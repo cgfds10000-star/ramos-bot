@@ -81,6 +81,33 @@ class NoViralizeRedirect(HTTPRedirectHandler):
         return None
 
 
+def viralize_http_error(error):
+    with error:
+        status = error.code
+        headers = error.headers or {}
+        challenge = headers.get("cf-mitigated", "").lower() == "challenge"
+        try:
+            raw = error.read(16385)
+            payload = json.loads(raw) if len(raw) <= 16384 else None
+        except (OSError, ValueError):
+            payload = None
+    edge = isinstance(payload, dict) and payload.get("cloudflare_error") is True
+    if edge or challenge:
+        code = str(payload.get("error_code", "")) if edge else ""
+        reference = f" (Cloudflare {code})" if re.fullmatch(r"1[0-9]{3}", code) else " (Cloudflare)"
+        ray = str(payload.get("ray_id") or "") if edge else ""
+        ray = ray or headers.get("cf-ray", "")
+        ray_info = f" ID da requisição: {ray}." if re.fullmatch(r"[A-Fa-f0-9]{16,32}(?:-[A-Z0-9]{3,8})?", ray) else ""
+        return f"A proteção do Viralize bloqueou a conexão do Ramos Bot{reference}. Isso não confirma suspensão da sua conta. Peça ao suporte do Viralize para verificar o acesso da API.{ray_info}"
+    return {
+        401: "O token do Viralize não foi aceito.",
+        403: "O Viralize recusou a chamada da API (HTTP 403). O motivo da recusa não foi confirmado.",
+        404: "O Viralize não encontrou a conta, tarefa ou ação.",
+        422: "O Viralize não aceitou o estado ou os parâmetros da operação.",
+        429: "Limite do Viralize atingido. Aguarde antes de iniciar outra rodada.",
+    }.get(status, f"O Viralize respondeu com HTTP {status}.")
+
+
 class ViralizeApi:
     def __init__(self, token):
         self.token = token
@@ -99,16 +126,7 @@ class ViralizeApi:
                 raw = response.read(262145)
             payload = json.loads(raw) if len(raw) <= 262144 else None
         except HTTPError as error:
-            with error:
-                status = error.code
-            message = {
-                401: "O token do Viralize não foi aceito.",
-                403: "Acesso ao Viralize suspenso ou sem permissão.",
-                404: "O Viralize não encontrou a conta, tarefa ou ação.",
-                422: "O Viralize não aceitou o estado ou os parâmetros da operação.",
-                429: "Limite do Viralize atingido. Aguarde antes de iniciar outra rodada.",
-            }.get(status, f"O Viralize respondeu com HTTP {status}.")
-            raise ApiError(message, 502) from None
+            raise ApiError(viralize_http_error(error), 502) from None
         except (URLError, OSError):
             raise ApiError("Sem resposta do Viralize. Confira a fila antes de repetir.", 502) from None
         except ValueError:
