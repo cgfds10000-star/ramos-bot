@@ -13,7 +13,7 @@ import http.client
 
 BACKEND = Path(__file__).resolve().parents[1] / 'backend'
 sys.path.insert(0, str(BACKEND))
-from app import ApiError, RamosService, command_payload, make_server
+from app import ApiError, RamosService, command_payload, make_server, ViralizeApi
 from storage import write_json, read_json
 import worker
 
@@ -79,6 +79,93 @@ class BackendChecks(unittest.TestCase):
             self.service.start(other, {'mode': 'login', 'username': 'TESTE', 'password': 'synthetic'})
         self.assertEqual(caught.exception.status, 409)
         self.assertEqual(len(self.service.data['accounts']), 1)
+
+    def viralize_fixture(self, queue, result='seguindo'):
+        account = self.service.add_account('minhaconta')
+        self.service.session(self.session).update(account_id=account['id'], authenticated=True, status='connected')
+        self.service.worker_command = [sys.executable, '-u', '-c', f'''import json,sys
+payload = json.loads(sys.stdin.readline())
+assert payload["mode"] == "command" and payload["username"] == "minhaconta"
+assert payload["steps"] == [{{"command": "seguir", "target": "perfil_teste", "limit": 10}}]
+assert "token" not in payload
+print(json.dumps({{"type": "result", "data": {{"estado": {result!r}, "id": "28"}}}}), flush=True)
+print(json.dumps({{"type": "done", "ok": True, "authenticated": True}}), flush=True)
+''']
+        calls = []
+
+        class MockViralize:
+            def request(self, endpoint, fields, *, write=False):
+                calls.append((endpoint, fields, write))
+                if endpoint == 'task':
+                    return queue
+                return {'success': True, 'completion_id': 84}
+
+        self.service.viralize_api = lambda token: MockViralize()
+        return calls
+
+    def viralize(self, action):
+        return self.service.mutate('POST', ['sessions', self.session, 'viralize', action], {'token': 'vzs_synthetic', 'type': 'follow'})
+
+    def viralize_result(self, status):
+        self.wait(lambda: self.service.viralize_runs[self.session]['status'] != 'running')
+        run = self.service.snapshot()['viralize'][self.session]
+        self.assertEqual(run['status'], status, run['message'])
+        return run
+
+    def test_viralize_reuses_the_worker_then_confirms_refill(self):
+        task = {'id': 15, 'type': 'follower', 'action_url': 'https://www.instagram.com/perfil_teste/', 'is_refill': True}
+        calls = self.viralize_fixture({'state': 'available', 'task': task})
+        self.viralize('link')
+        self.viralize('start')
+        self.viralize_result('done')
+        common = {'social': 'instagram', 'username': 'minhaconta'}
+        self.assertEqual(calls, [
+            ('account/ensure', common, True),
+            ('task', {**common, 'type': 'follow'}, False),
+            ('task/accept', {**common, 'task_id': 15, 'is_refill': True}, True),
+            ('task/confirm-analysis', {**common, 'completion_id': 84, 'is_refill': True}, True),
+        ])
+        self.assertNotIn('vzs_synthetic', json.dumps(self.service.snapshot()))
+        self.assertNotIn('vzs_synthetic', self.service.state_file.read_text())
+
+    def test_viralize_pending_follow_is_not_confirmed_or_repeated(self):
+        task = {'id': 15, 'type': 'follow', 'instagram_username': 'perfil_teste', 'is_refill': True}
+        calls = self.viralize_fixture({'state': 'active', 'completion': {'id': 84, 'status': 'pending', 'task': task}}, 'solicitacao_pendente')
+        self.viralize('start')
+        self.assertTrue(self.viralize_result('attention')['can_skip'])
+        self.viralize('start')
+        self.assertIn('já foi tentada', self.viralize_result('attention')['message'])
+        self.viralize('skip')
+        self.viralize_result('done')
+        self.assertEqual([call[0] for call in calls], ['task', 'task', 'task', 'task/skip'])
+        self.assertEqual(calls[-1][1]['task_id'], 15)
+        self.assertTrue(calls[-1][1]['is_refill'])
+
+    def test_viralize_incompatible_offer_is_only_skipped_on_request(self):
+        queue = {'state': 'available', 'task': {'id': 15, 'type': 'follow', 'action_url': 'https://instagram.com.example.test/perfil/'}}
+        calls = self.viralize_fixture(queue)
+        self.viralize('start')
+        self.assertTrue(self.viralize_result('attention')['can_skip'])
+        self.assertEqual([call[0] for call in calls], ['task'])
+        self.viralize('skip')
+        self.viralize_result('done')
+        self.assertEqual([call[0] for call in calls], ['task', 'task', 'task/skip-browse'])
+
+    def test_viralize_empty_queue_is_not_polled(self):
+        calls = self.viralize_fixture({'state': 'empty'})
+        self.viralize('start')
+        self.viralize_result('empty')
+        self.assertEqual([call[0] for call in calls], ['task'])
+
+    def test_viralize_token_is_only_in_bearer_header(self):
+        service = ViralizeApi('vzs_synthetic')
+        with patch.object(service.opener, 'open', return_value=io.BytesIO(b'{"success":true}')) as send:
+            service.request('account/ensure', {'social': 'instagram', 'username': 'teste'}, write=True)
+        request = send.call_args.args[0]
+        self.assertEqual(request.full_url, 'https://viralizesociais.com/api/account/ensure')
+        self.assertEqual(request.get_header('Authorization'), 'Bearer vzs_synthetic')
+        self.assertNotIn(b'vzs_synthetic', request.data)
+        self.assertEqual(request.method, 'POST')
 
     def test_invalid_macro_is_not_partially_saved(self):
         with self.assertRaises(ApiError):

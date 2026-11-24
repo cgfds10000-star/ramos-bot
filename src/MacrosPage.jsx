@@ -1,14 +1,23 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, Eye, EyeOff, KeyRound, Minus, Monitor, Play, Plus } from 'lucide-react';
 
-export default function MacrosPage({ sessions }) {
+export default function MacrosPage({ sessions, api, refresh, status, online }) {
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [linkedIds, setLinkedIds] = useState([]);
+  const [taskType, setTaskType] = useState('follow');
+  const [busy, setBusy] = useState(false);
+  const [messages, setMessages] = useState({});
   const allCheckbox = useRef(null);
-  const selected = sessions.filter(session => selectedIds.includes(session.id));
-  const allSelected = sessions.length > 0 && selected.length === sessions.length;
+  const eligible = sessions.filter(session => session.authenticated);
+  const selected = eligible.filter(session => selectedIds.includes(session.id));
+  const allSelected = eligible.length > 0 && selected.length === eligible.length;
   const someSelected = selected.length > 0 && !allSelected;
+  const running = Object.values(status).some(run => run.status === 'running');
+  const validKey = /^vzs_[A-Za-z0-9_-]{1,480}$/.test(apiKey.trim());
+  const canApply = online && !busy && validKey && selected.length > 0 && !running;
+  const canStart = canApply && selected.every(session => linkedIds.includes(session.id));
 
   useEffect(() => {
     if (allCheckbox.current) allCheckbox.current.indeterminate = someSelected;
@@ -16,6 +25,27 @@ export default function MacrosPage({ sessions }) {
 
   function toggleSession(id) {
     setSelectedIds(ids => ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id]);
+  }
+
+  async function send(action, items) {
+    if (busy || !online) return;
+    setBusy(true);
+    try {
+      for (const session of items) {
+        try {
+          const path = `/sessions/${session.id}/${action === 'stop' ? 'stop' : `viralize/${action}`}`;
+          await api.post(path, action === 'stop' ? {} : { token: apiKey.trim(), type: taskType });
+          if (action === 'link') setLinkedIds(ids => [...new Set([...ids, session.id])]);
+          setMessages(previous => ({ ...previous, [session.id]: action === 'link' ? 'Conta vinculada no Viralize.' : '' }));
+        } catch (error) {
+          if (action === 'link') setLinkedIds(ids => ids.filter(id => id !== session.id));
+          setMessages(previous => ({ ...previous, [session.id]: error.message || 'Não foi possível concluir esta operação.' }));
+        }
+      }
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
   }
 
   return <main className="macros-page" aria-label="Macros">
@@ -32,47 +62,67 @@ export default function MacrosPage({ sessions }) {
           aria-labelledby="api-key-title"
           placeholder="Cole sua chave de API"
           value={apiKey}
-          onChange={event => setApiKey(event.target.value)}
+          onChange={event => { setApiKey(event.target.value); setLinkedIds([]); setMessages({}); }}
           autoComplete="off"
           autoCapitalize="none"
           spellCheck="false"
           maxLength={512}
+          disabled={busy || running}
         />
         <button type="button" className="macro-key-toggle" aria-label={showKey ? 'Ocultar chave da API' : 'Mostrar chave da API'} aria-pressed={showKey} onClick={() => setShowKey(value => !value)}>
           {showKey ? <EyeOff aria-hidden="true"/> : <Eye aria-hidden="true"/>}
         </button>
       </div>
 
-      <fieldset className="macro-sessions">
+      <p className="macro-flow-note">Use o token do Viralize. Ele não é salvo e não substitui o login do Instagram.</p>
+
+      <fieldset className="macro-sessions" disabled={busy || running}>
         <legend>Sessões para executar</legend>
         <label className="macro-session-option macro-select-all">
-          <input ref={allCheckbox} type="checkbox" checked={allSelected} disabled={!sessions.length} onChange={() => setSelectedIds(allSelected ? [] : sessions.map(session => session.id))}/>
+          <input ref={allCheckbox} type="checkbox" checked={allSelected} disabled={!eligible.length} onChange={() => setSelectedIds(allSelected ? [] : eligible.map(session => session.id))}/>
           <span className="macro-session-name">Todas as sessões</span>
           <span className={`macro-checkbox ${someSelected || allSelected ? 'is-checked' : ''}`} aria-hidden="true">{someSelected ? <Minus/> : allSelected ? <Check/> : null}</span>
         </label>
         <div className="macro-session-options">
           {sessions.map(session => <label className="macro-session-option" key={session.id}>
-            <input type="checkbox" checked={selectedIds.includes(session.id)} onChange={() => toggleSession(session.id)}/>
+            <input type="checkbox" checked={session.authenticated && selectedIds.includes(session.id)} disabled={!session.authenticated} onChange={() => toggleSession(session.id)}/>
             <Monitor className="macro-session-icon" aria-hidden="true"/>
-            <span className="macro-session-name">{session.name}</span>
-            <span className={`macro-checkbox ${selectedIds.includes(session.id) ? 'is-checked' : ''}`} aria-hidden="true">{selectedIds.includes(session.id) && <Check/>}</span>
+            <span className="macro-session-name">{session.name}{!session.authenticated ? ' · desconectada' : linkedIds.includes(session.id) ? ' · vinculada' : ''}</span>
+            <span className={`macro-checkbox ${session.authenticated && selectedIds.includes(session.id) ? 'is-checked' : ''}`} aria-hidden="true">{session.authenticated && selectedIds.includes(session.id) && <Check/>}</span>
           </label>)}
         </div>
-        {!sessions.length && <p className="macro-empty-sessions">Suas sessões aparecerão aqui.</p>}
+        {!eligible.length && <p className="macro-empty-sessions">Conecte uma conta do Instagram em Sessões para começar.</p>}
       </fieldset>
 
       <p className="macro-selection-count" aria-live="polite">{selected.length === 1 ? '1 sessão selecionada' : `${selected.length} sessões selecionadas`}</p>
-      <button type="button" className="macro-apply-button" disabled title="Disponível apenas como interface visual nesta versão." aria-describedby="macro-preview-note"><Plus aria-hidden="true"/>Aplicar plugin</button>
-      <span id="macro-preview-note" className="macro-visually-hidden">Interface visual. A chave não é salva ou enviada e o plugin não é executado.</span>
+      <button type="button" className="macro-apply-button" disabled={!canApply} onClick={() => send('link', selected)}><Plus aria-hidden="true"/>Aplicar plugin</button>
     </section>
 
     <section className="macro-execution-card" aria-labelledby="macro-execution-title">
       <div className="macro-execution-state">
         <h2 id="macro-execution-title">Execução</h2>
-        <span className="macro-stopped">Parada</span>
+        <span className="macro-stopped">{running ? 'Em andamento' : 'Parada'}</span>
       </div>
-      <button type="button" className="macro-start-button" disabled aria-describedby="macro-preview-note"><Play aria-hidden="true"/>Iniciar</button>
-      <p>Configure a API para começar.</p>
+      <label className="macro-task-type">Tipo de tarefa
+        <select value={taskType} onChange={event => setTaskType(event.target.value)} disabled={busy || running}>
+          <option value="follow">Seguir perfis</option>
+          <option value="like">Curtir publicações</option>
+          <option value="follow,like">Seguir e curtir</option>
+        </select>
+      </label>
+      <button type="button" className="macro-start-button" disabled={!canStart} onClick={() => send('start', selected)}><Play aria-hidden="true"/>Iniciar</button>
+      <p>Uma tarefa por sessão em cada rodada. Só ações confirmadas pelo Instagram são enviadas para análise.</p>
+      <ul className="macro-run-list" aria-live="polite">
+        {sessions.filter(session => status[session.id] || messages[session.id]).map(session => {
+          const run = status[session.id];
+          return <li key={session.id}>
+            <strong>{session.name}</strong>
+            <p>{messages[session.id] || run?.message}</p>
+            {run?.status === 'running' && <button type="button" className="text-button" disabled={busy || !online} onClick={() => send('stop', [session])}>Interromper</button>}
+            {run?.can_skip && <button type="button" className="text-button" disabled={busy || !online || !validKey || !session.authenticated || !linkedIds.includes(session.id)} onClick={() => send('skip', [session])}>Pular tarefa</button>}
+          </li>;
+        })}
+      </ul>
     </section>
   </main>;
 }

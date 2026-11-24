@@ -19,7 +19,9 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import SimpleCookie, CookieError
-from urllib.parse import urlsplit
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 import uuid
 from storage import read_json as storage_read, write_json
 
@@ -74,8 +76,111 @@ def private_json(path, value):
     write_json(path, value)
 
 
+class NoViralizeRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+class ViralizeApi:
+    def __init__(self, token):
+        self.token = token
+        self.opener = build_opener(NoViralizeRedirect())
+
+    def request(self, endpoint, fields, *, write=False):
+        base = "https://viralizesociais.com/api/" + endpoint
+        url = base if write else base + "?" + urlencode(fields)
+        body = json.dumps(fields).encode() if write else None
+        headers = {"Authorization": "Bearer " + self.token, "Accept": "application/json"}
+        if write:
+            headers["Content-Type"] = "application/json"
+        request = Request(url, data=body, headers=headers, method="POST" if write else "GET")
+        try:
+            with self.opener.open(request, timeout=8) as response:
+                raw = response.read(262145)
+            payload = json.loads(raw) if len(raw) <= 262144 else None
+        except HTTPError as error:
+            with error:
+                status = error.code
+            message = {
+                401: "O token do Viralize não foi aceito.",
+                403: "Acesso ao Viralize suspenso ou sem permissão.",
+                404: "O Viralize não encontrou a conta, tarefa ou ação.",
+                422: "O Viralize não aceitou o estado ou os parâmetros da operação.",
+                429: "Limite do Viralize atingido. Aguarde antes de iniciar outra rodada.",
+            }.get(status, f"O Viralize respondeu com HTTP {status}.")
+            raise ApiError(message, 502) from None
+        except (URLError, OSError):
+            raise ApiError("Sem resposta do Viralize. Confira a fila antes de repetir.", 502) from None
+        except ValueError:
+            raise ApiError("O Viralize devolveu uma resposta inválida.", 502) from None
+        if not isinstance(payload, dict) or payload.get("success") is False:
+            raise ApiError("O Viralize não confirmou a operação.", 502)
+        nested = payload.get("data")
+        value = {**payload, **nested} if isinstance(nested, dict) else payload
+        if value.get("success") is False or (write and value.get("success") is not True):
+            raise ApiError("O Viralize não confirmou a operação.", 502)
+        return value
+
+
+def viralize_id(value):
+    if isinstance(value, bool) or not re.fullmatch(r"[1-9][0-9]{0,19}", str(value)):
+        raise ApiError("O Viralize não informou um identificador válido.", 502)
+    return int(value)
+
+
+def viralize_offer(queue):
+    state = queue.get("state")
+    if state == "empty":
+        return None, None
+    completion = queue.get("completion") if state == "active" else None
+    if state == "active" and isinstance(completion, dict):
+        task = completion.get("task")
+    elif state == "available":
+        task = queue.get("task")
+    else:
+        raise ApiError("O Viralize retornou um estado de fila desconhecido.", 502)
+    if not isinstance(task, dict) or type(task.get("is_refill", False)) is not bool:
+        raise ApiError("O Viralize devolveu uma tarefa incompleta.", 502)
+    offer = {"task_id": viralize_id(task.get("id")), "is_refill": task.get("is_refill", False), "state": state}
+    if completion is not None:
+        offer["completion_id"] = viralize_id(completion.get("id") or completion.get("completion_id") or queue.get("completion_id"))
+        offer["completion_state"] = completion.get("state") or completion.get("status") or "pending"
+    return offer, task
+
+
+def viralize_step(task):
+    kind = task.get("type") or task.get("task_type") or task.get("action_type")
+    if kind not in ("follow", "follower", "followers", "like", "likes"):
+        return None
+    target = task.get("action_url") or task.get("instagram_url")
+    if not target and kind in ("follow", "follower", "followers"):
+        target = task.get("instagram_username")
+        if isinstance(target, str) and USERNAME.fullmatch(target.removeprefix("@")):
+            return command_payload({"command": "seguir", "target": target})
+        return None
+    if not isinstance(target, str) or len(target) > 500:
+        return None
+    try:
+        parsed = urlsplit(target)
+        if (parsed.scheme != "https" or parsed.hostname not in {"instagram.com", "www.instagram.com"}
+                or parsed.port not in (None, 443) or parsed.username is not None):
+            return None
+        parts = parsed.path.strip("/").split("/")
+        if kind in ("follow", "follower", "followers"):
+            if len(parts) == 2 and parts[0] == "_u":
+                parts = parts[1:]
+            if len(parts) != 1 or parts[0] in {"p", "reel", "tv", "accounts", "explore", "stories"}:
+                return None
+            return command_payload({"command": "seguir", "target": parts[0]})
+        if len(parts) != 2 or parts[0] not in {"p", "reel", "tv"}:
+            return None
+        return command_payload({"command": "curtir", "target": f"https://www.instagram.com/{parts[0]}/{parts[1]}/"})
+    except (ApiError, ValueError):
+        return None
+
+
 class RamosService:
-    def __init__(self, directory=None, worker_command=None, dependency_check=None):
+    def __init__(self, directory=None, worker_command=None, dependency_check=None, viralize_api=ViralizeApi):
         self.directory = Path(directory or os.environ.get("RAMOS_DATA_DIR", ROOT / "data")).resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
@@ -83,6 +188,8 @@ class RamosService:
         self.worker_command = worker_command or [sys.executable, "-u", str(ROOT / "backend" / "worker.py")]
         self.dependency_check = dependency_check or (lambda: importlib.util.find_spec("instagrapi") is not None)
         self.jobs = {}
+        self.viralize_api = viralize_api
+        self.viralize_runs = {}
         self.logs = deque(maxlen=1000)
         self.sequence = 0
         self.state_file = self.directory / "state.json"
@@ -148,6 +255,10 @@ class RamosService:
     def snapshot(self):
         with self.lock:
             data = json.loads(json.dumps(self.data))
+            data.pop("viralize_attempts", None)
+            data["viralize"] = {session_id: {
+                "status": run["status"], "message": run["message"], "can_skip": run["can_skip"]
+            } for session_id, run in self.viralize_runs.items()}
             for account in data["accounts"]:
                 account["has_session"] = (self.directory / "accounts" / account["id"] / "session.json").is_file()
             parsed = urlsplit(data.pop("proxy", ""))
@@ -158,9 +269,12 @@ class RamosService:
             data["server_time_ms"] = int(time.time() * 1000)
             return data
 
-    def start(self, session_id, payload):
+    def start(self, session_id, payload, viralize_run=None):
         with self.lock:
             session = self.session(session_id)
+            run = self.viralize_runs.get(session_id)
+            if run and run["status"] == "running" and run is not viralize_run:
+                raise ApiError("A rodada do Viralize ainda está em andamento nesta sessão.", 409)
             if session_id in self.jobs:
                 raise ApiError("Essa sessão já está executando uma operação.", 409)
             if not self.dependency_check():
@@ -191,7 +305,8 @@ class RamosService:
             session.update(account_id=account["id"], status="connecting" if mode == "login" else "running", challenge=None)
             if mode == "login":
                 session["authenticated"] = False
-            job = {"id": str(uuid.uuid4()), "account_id": account["id"], "process": None, "hidden": [password], "cancelled": False}
+            job = {"id": str(uuid.uuid4()), "account_id": account["id"], "process": None, "hidden": [password], "cancelled": False,
+                   "finished": threading.Event(), "result": None, "success": False}
             self.jobs[session_id] = job
             worker_payload = {"mode": mode, "username": account["username"], "password": password, "steps": steps,
                               "directory": str(self.directory / "accounts" / account["id"]), "proxy": self.data.get("proxy", ""),
@@ -244,11 +359,13 @@ class RamosService:
                     elif kind == "result":
                         result = event.get("data")
                         if isinstance(result, dict):
+                            job["result"] = result
                             session["last_result"] = result
                             self.log(session_id, "success", json.dumps(result, ensure_ascii=False), job["hidden"])
                     elif kind == "done":
                         completed = True
                         authenticated = bool(event.get("authenticated"))
+                        job["success"] = event.get("ok") is True and authenticated
                         session.update(authenticated=authenticated, status="connected" if authenticated else "error", challenge=None, last_ok=bool(event.get("ok")))
                         if authenticated:
                             self.account(session["account_id"])["last_connected"] = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -272,6 +389,7 @@ class RamosService:
                         self.log(session_id, "error", "O módulo foi encerrado antes de confirmar a operação. Conecte novamente para verificar a sessão.")
                     self.save()
             job["hidden"].clear()
+            job["finished"].set()
 
     def cancel(self, session_id, disconnect=False, timeout=False, expected=None):
         with self.lock:
@@ -279,12 +397,16 @@ class RamosService:
             job = self.jobs.get(session_id)
             if expected is not None and job is not expected:
                 return
+            run = self.viralize_runs.get(session_id)
+            if run and run["status"] == "running":
+                run["stop"] = True
             self.jobs.pop(session_id, None)
             if job:
                 job["cancelled"] = True
                 process = job["process"]
                 if process is not None and process.poll() is None:
                     process.terminate()
+                job["finished"].set()
             if disconnect or session["status"] in {"connecting", "awaiting_input"}:
                 session["authenticated"] = False
             session.update(status="connected" if session.get("authenticated") else "disconnected", challenge=None)
@@ -315,7 +437,121 @@ class RamosService:
             raise ApiError("Macro não encontrada.", 404)
         return item
 
+    def viralize_action(self, session_id, action, body):
+        token = body.get("token")
+        if not isinstance(token, str) or not re.fullmatch(r"vzs_[A-Za-z0-9_-]{1,480}", token):
+            raise ApiError("Informe um token do Viralize no formato vzs_…")
+        with self.lock:
+            session = self.session(session_id)
+            if not session.get("authenticated"):
+                raise ApiError("Conecte a conta do Instagram nesta sessão antes de usar o Viralize.", 409)
+            previous = self.viralize_runs.get(session_id)
+            if session_id in self.jobs or (previous and previous["status"] == "running"):
+                raise ApiError("Já há uma operação em andamento nesta sessão.", 409)
+            account = self.account(session["account_id"])
+            fields = {"social": "instagram", "username": account["username"]}
+            if action != "link":
+                task_type = body.get("type", "follow")
+                if task_type not in ("follow", "like", "follow,like"):
+                    raise ApiError("Selecione tarefas de seguir ou curtir.")
+                skip_offer = None
+                if action == "skip":
+                    if not previous or not previous["can_skip"] or previous["account_id"] != account["id"]:
+                        raise ApiError("Não há uma tarefa selecionada para pular.", 409)
+                    skip_offer, task_type = previous["offer"], previous["type"]
+                run = {"account_id": account["id"], "type": task_type, "status": "running", "stop": False,
+                       "message": "Consultando a fila do Viralize…", "can_skip": False, "offer": None}
+                self.viralize_runs[session_id] = run
+                self.log(session_id, "info", run["message"])
+                thread = threading.Thread(target=self.run_viralize, args=(session_id, run, token, fields, skip_offer), daemon=True)
+                thread.start()
+                return {"ok": True}
+        self.viralize_api(token).request("account/ensure", fields, write=True)
+        return {"ok": True}
+
+    def viralize_update(self, session_id, run, status, message, can_skip=False):
+        with self.lock:
+            run.update(status=status, message=message, can_skip=can_skip)
+            if self.viralize_runs.get(session_id) is run:
+                self.log(session_id, "error" if status == "error" else "info", message)
+
+    def viralize_require_current(self, session_id, run):
+        if run["stop"] or self.viralize_runs.get(session_id) is not run:
+            raise ApiError("A rodada foi interrompida.", 409)
+        session = self.session(session_id)
+        if not session.get("authenticated") or session.get("account_id") != run["account_id"]:
+            raise ApiError("A conta da sessão mudou. Nenhuma ação adicional será enviada.", 409)
+
+    def run_viralize(self, session_id, run, token, fields, skip_offer):
+        def update(status, message, can_skip=False):
+            self.viralize_update(session_id, run, status, message, can_skip)
+
+        try:
+            api = self.viralize_api(token)
+            queue = api.request("task", {**fields, "type": run["type"]})
+            with self.lock:
+                self.viralize_require_current(session_id, run)
+            offer, task = viralize_offer(queue)
+            if offer is None:
+                update("empty", "Fila vazia. Inicie outra rodada quando quiser consultar de novo.")
+                return
+            run["offer"] = offer
+            if skip_offer is not None:
+                if offer != skip_offer:
+                    raise ApiError("A tarefa ou seu estado mudou. Nada foi pulado.", 409)
+                endpoint = "task/skip-browse" if offer["state"] == "available" else "task/skip"
+                api.request(endpoint, {**fields, "task_id": offer["task_id"], "is_refill": offer["is_refill"]}, write=True)
+                update("done", "Tarefa pulada no Viralize.")
+                return
+            if offer.get("completion_state", "pending") != "pending":
+                update("attention", "A ação existente não está pendente. Não foi executada novamente.")
+                return
+            step = viralize_step(task)
+            if step is None or (step["command"] == "seguir" and step["target"].casefold() == fields["username"].casefold()):
+                update("attention", "Tarefa incompatível com esta sessão do Instagram. Você pode pulá-la.", True)
+                return
+            with self.lock:
+                self.viralize_require_current(session_id, run)
+                if not self.dependency_check():
+                    raise ApiError("O módulo Python do Instagram ainda não está instalado.", 503)
+            if offer["state"] == "available":
+                update("running", "Aceitando a tarefa no Viralize…")
+                accepted = api.request("task/accept", {**fields, "task_id": offer["task_id"], "is_refill": offer["is_refill"]}, write=True)
+                completion = accepted.get("completion")
+                completion_id = viralize_id(accepted.get("completion_id") or (completion.get("id") if isinstance(completion, dict) else None))
+                offer.update(state="active", completion_id=completion_id, completion_state="pending")
+            with self.lock:
+                self.viralize_require_current(session_id, run)
+                key = f'{offer["task_id"]}:{offer["completion_id"]}:{int(offer["is_refill"])}'
+                attempts = self.data.setdefault("viralize_attempts", {}).setdefault(run["account_id"], [])
+                if key in attempts:
+                    update("attention", "Esta ação já foi tentada pelo Ramos Bot. Confira o resultado; não será repetida.", True)
+                    return
+                attempts.append(key)
+                del attempts[:-500]
+                self.save()
+                self.start(session_id, {**step, "mode": "command"}, viralize_run=run)
+                job = self.jobs[session_id]
+            update("running", "Executando o alvo da tarefa no Instagram…")
+            if not job["finished"].wait(610):
+                raise ApiError("O executor do Instagram não confirmou o fim da ação.", 504)
+            with self.lock:
+                self.viralize_require_current(session_id, run)
+            expected = "seguindo" if step["command"] == "seguir" else "curtida"
+            if not job["success"] or (job["result"] or {}).get("estado") != expected:
+                update("attention", "A ação não foi confirmada como executada. Nada foi enviado para análise.", True)
+                return
+            update("running", "Ação confirmada pelo Instagram. Enviando para análise…")
+            api.request("task/confirm-analysis", {**fields, "completion_id": offer["completion_id"], "is_refill": offer["is_refill"]}, write=True)
+            update("done", "Enviada para análise no Viralize. O crédito depende da validação.")
+        except ApiError as error:
+            update("stopped" if run["stop"] else "error", str(error))
+        except Exception:
+            update("error", "A rodada não foi concluída. Confira a fila no Viralize antes de repetir.")
+
     def mutate(self, method, route, body):
+        if method == "POST" and len(route) == 4 and route[0] == "sessions" and route[2] == "viralize" and route[3] in {"link", "start", "skip"}:
+            return self.viralize_action(route[1], route[3], body)
         with self.lock:
             if route == ["sessions"] and method == "POST":
                 if len(self.data["sessions"]) >= 20:
@@ -333,6 +569,7 @@ class RamosService:
                 self.session(session_id)
                 if len(route) == 2 and method == "DELETE":
                     self.cancel(session_id, disconnect=True)
+                    self.viralize_runs.pop(session_id, None)
                     self.data["sessions"] = [s for s in self.data["sessions"] if s["id"] != session_id]
                 elif len(route) == 3 and method == "POST":
                     action = route[2]
@@ -412,6 +649,8 @@ class RamosService:
 
     def close(self):
         with self.lock:
+            for run in self.viralize_runs.values():
+                run["stop"] = True
             for session_id in list(self.jobs):
                 self.cancel(session_id, disconnect=True)
 

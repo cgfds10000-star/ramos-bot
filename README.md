@@ -24,6 +24,15 @@ A primeira execução instala as dependências. O ZIP de entrega também inclui 
 
 O núcleo usa o `instagram_login_apk.py` fornecido, com `instagrapi==3.2.19`. Uma sessão só aparece como conectada depois de ser validada pelo servidor do Instagram. Os testes usam processos e dados sintéticos; não houve login em uma conta real durante esta entrega.
 
+## Fila do Viralize em Macros
+
+1. Conecte suas contas do Instagram em **Sessões**. Abra **Macros**, informe o token do Viralize (`vzs_…`), selecione as sessões conectadas e clique em **Aplicar plugin**.
+2. Escolha **Seguir perfis**, **Curtir publicações** ou **Seguir e curtir**, e clique em **Iniciar**. Cada sessão recebe no máximo uma tarefa na rodada. Se já houver uma ação pendente, ela é retomada em vez de aceitar outra oferta. Fila vazia encerra a rodada.
+3. O executor Python usa o perfil ou a publicação da tarefa. O Viralize só recebe a ação para análise após a confirmação do Instagram. Solicitações pendentes, curtidas que já existiam e ações inconclusivas não são enviadas. A recompensa depende da análise do Viralize.
+4. **Pular tarefa** aparece quando é possível ignorar a oferta ou encerrar a ação aceita. **Interromper** cancela a rodada quando possível; não desfaz solicitações já enviadas. O andamento também aparece no terminal da sessão.
+
+O token fica em memória, é enviado por Bearer à API oficial e não é salvo nos dados ou no terminal. Só Instagram é executado nesta integração; não são postados comentários nem executadas tarefas de TikTok. O login e o 2FA existentes não mudam.
+
 ## Desenvolvimento
 
 ```bash

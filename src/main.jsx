@@ -209,7 +209,7 @@ function App() {
       </div>
     </header>
 
-    {page === 'macros' ? <MacrosPage sessions={state.sessions}/> : <main>
+    {page === 'macros' ? <MacrosPage sessions={state.sessions} api={api} refresh={refresh} status={state.viralize || {}} online={online}/> : <main>
       <section className="welcome"><h1>Bem-vindo, <span>Carlos</span></h1><p>Gerencie suas sessões, contas, proxy e macros.</p></section>
       <section className="stats" aria-label="Resumo do Ramos Bot">
         <button onClick={() => setWorkspaceOpen(false)}><Monitor/><span>Sessões</span><strong>{state.sessions.length}</strong></button>
