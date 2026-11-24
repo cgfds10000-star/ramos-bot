@@ -23,26 +23,34 @@ export default function MacrosPage({ sessions, api, refresh, status, online }) {
     if (allCheckbox.current) allCheckbox.current.indeterminate = someSelected;
   }, [someSelected]);
 
+  useEffect(() => {
+    const activeIds = new Set(sessions.filter(session => session.authenticated).map(session => session.id));
+    setSelectedIds(ids => ids.filter(id => activeIds.has(id)));
+    setLinkedIds(ids => ids.filter(id => activeIds.has(id)));
+  }, [sessions]);
+
   function toggleSession(id) {
     setSelectedIds(ids => ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id]);
   }
 
   async function send(action, items) {
-    if (busy || !online) return;
+    if (busy || !online || !items.length) return;
     setBusy(true);
     try {
       for (const session of items) {
         try {
           const path = `/sessions/${session.id}/${action === 'stop' ? 'stop' : `viralize/${action}`}`;
+          setMessages(previous => ({ ...previous, [session.id]: action === 'link' ? 'Vinculando conta…' : action === 'start' ? 'Iniciando rodada…' : action === 'skip' ? 'Pulando tarefa…' : 'Interrompendo…' }));
           await api.post(path, action === 'stop' ? {} : { token: apiKey.trim(), type: taskType });
           if (action === 'link') setLinkedIds(ids => [...new Set([...ids, session.id])]);
           setMessages(previous => ({ ...previous, [session.id]: action === 'link' ? 'Conta vinculada no Viralize.' : '' }));
         } catch (error) {
           if (action === 'link') setLinkedIds(ids => ids.filter(id => id !== session.id));
           setMessages(previous => ({ ...previous, [session.id]: error.message || 'Não foi possível concluir esta operação.' }));
+        } finally {
+          await refresh();
         }
       }
-      await refresh();
     } finally {
       setBusy(false);
     }
@@ -98,10 +106,10 @@ export default function MacrosPage({ sessions, api, refresh, status, online }) {
       <button type="button" className="macro-apply-button" disabled={!canApply} onClick={() => send('link', selected)}><Plus aria-hidden="true"/>Aplicar plugin</button>
     </section>
 
-    <section className="macro-execution-card" aria-labelledby="macro-execution-title">
+    <section className="macro-execution-card" aria-labelledby="macro-execution-title" aria-busy={busy || running}>
       <div className="macro-execution-state">
         <h2 id="macro-execution-title">Execução</h2>
-        <span className="macro-stopped">{running ? 'Em andamento' : 'Parada'}</span>
+        <span className={`macro-stopped ${running ? 'is-running' : ''}`}>{running ? 'Em andamento' : 'Parada'}</span>
       </div>
       <label className="macro-task-type">Tipo de tarefa
         <select value={taskType} onChange={event => setTaskType(event.target.value)} disabled={busy || running}>
@@ -111,12 +119,13 @@ export default function MacrosPage({ sessions, api, refresh, status, online }) {
         </select>
       </label>
       <button type="button" className="macro-start-button" disabled={!canStart} onClick={() => send('start', selected)}><Play aria-hidden="true"/>Iniciar</button>
-      <p>Uma tarefa por sessão em cada rodada. Só ações confirmadas pelo Instagram são enviadas para análise.</p>
+      <p className="macro-execution-note">Uma tarefa por sessão em cada rodada. Só ações confirmadas pelo Instagram são enviadas para análise.</p>
       <ul className="macro-run-list" aria-live="polite">
         {sessions.filter(session => status[session.id] || messages[session.id]).map(session => {
           const run = status[session.id];
+          const stateLabel = run?.status === 'running' ? 'Em execução' : run?.status === 'done' ? 'Concluído' : run?.status === 'empty' ? 'Fila vazia' : run?.status === 'attention' ? 'Atenção' : run?.status === 'error' ? 'Erro' : '';
           return <li key={session.id}>
-            <strong>{session.name}</strong>
+            <div className="macro-run-heading"><strong>{session.name}</strong>{stateLabel && <span className={`macro-run-status is-${run.status}`}>{stateLabel}</span>}</div>
             <p>{messages[session.id] || run?.message}</p>
             {run?.status === 'running' && <button type="button" className="text-button" disabled={busy || !online} onClick={() => send('stop', [session])}>Interromper</button>}
             {run?.can_skip && <button type="button" className="text-button" disabled={busy || !online || !validKey || !session.authenticated || !linkedIds.includes(session.id)} onClick={() => send('skip', [session])}>Pular tarefa</button>}
