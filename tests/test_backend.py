@@ -83,6 +83,7 @@ class BackendChecks(unittest.TestCase):
         self.assertEqual(len(self.service.data['accounts']), 1)
 
     def viralize_fixture(self, queue, result='seguindo'):
+        queues = list(queue) if isinstance(queue, list) else [queue]
         account = self.service.add_account('minhaconta')
         self.service.session(self.session).update(account_id=account['id'], authenticated=True, status='connected')
         self.service.worker_command = [sys.executable, '-u', '-c', f'''import json,sys
@@ -99,7 +100,7 @@ print(json.dumps({{"type": "done", "ok": True, "authenticated": True}}), flush=T
             def request(self, endpoint, fields, *, write=False):
                 calls.append((endpoint, fields, write))
                 if endpoint == 'task':
-                    return queue
+                    return queues.pop(0) if queues else {'state': 'empty'}
                 return {'success': True, 'completion_id': 84}
 
         self.service.viralize_api = lambda token: MockViralize()
@@ -119,20 +120,22 @@ print(json.dumps({{"type": "done", "ok": True, "authenticated": True}}), flush=T
         calls = self.viralize_fixture({'state': 'available', 'task': task})
         self.viralize('link')
         self.viralize('start')
-        self.viralize_result('done')
+        run = self.viralize_result('empty')
+        self.assertIn('1 tarefa(s) enviada(s)', run['message'])
         common = {'social': 'instagram', 'username': 'minhaconta'}
         self.assertEqual(calls, [
             ('account/ensure', common, True),
             ('task', {**common, 'type': 'follow'}, False),
             ('task/accept', {**common, 'task_id': 15, 'is_refill': True}, True),
             ('task/confirm-analysis', {**common, 'completion_id': 84, 'is_refill': True}, True),
+            ('task', {**common, 'type': 'follow'}, False),
         ])
         self.assertNotIn('vzs_synthetic', json.dumps(self.service.snapshot()))
         self.assertNotIn('vzs_synthetic', self.service.state_file.read_text())
 
     def test_viralize_pending_follow_is_not_confirmed_or_repeated(self):
         task = {'id': 15, 'type': 'follow', 'instagram_username': 'perfil_teste', 'is_refill': True}
-        calls = self.viralize_fixture({'state': 'active', 'completion': {'id': 84, 'status': 'pending', 'task': task}}, 'solicitacao_pendente')
+        calls = self.viralize_fixture([{'state': 'active', 'completion': {'id': 84, 'status': 'pending', 'task': task}}] * 3, 'solicitacao_pendente')
         self.viralize('start')
         self.assertTrue(self.viralize_result('attention')['can_skip'])
         self.viralize('start')
@@ -145,7 +148,7 @@ print(json.dumps({{"type": "done", "ok": True, "authenticated": True}}), flush=T
 
     def test_viralize_incompatible_offer_is_only_skipped_on_request(self):
         queue = {'state': 'available', 'task': {'id': 15, 'type': 'follow', 'action_url': 'https://instagram.com.example.test/perfil/'}}
-        calls = self.viralize_fixture(queue)
+        calls = self.viralize_fixture([queue, queue])
         self.viralize('start')
         self.assertTrue(self.viralize_result('attention')['can_skip'])
         self.assertEqual([call[0] for call in calls], ['task'])

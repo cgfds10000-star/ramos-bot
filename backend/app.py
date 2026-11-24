@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 USERNAME = re.compile(r"[A-Za-z0-9_.]{1,30}")
 COMMANDS = {"buscar", "perfil", "seguir", "curtir"}
 BUSY = {"connecting", "running", "awaiting_input"}
+MAX_VIRALIZE_TASKS_PER_ROUND = 50
 
 
 class ApiError(Exception):
@@ -510,64 +511,71 @@ class RamosService:
         def update(status, message, can_skip=False):
             self.viralize_update(session_id, run, status, message, can_skip)
 
+        completed_count = 0
         try:
             api = self.viralize_api(token)
-            queue = api.request("task", {**fields, "type": run["type"]})
-            with self.lock:
-                self.viralize_require_current(session_id, run)
-            offer, task = viralize_offer(queue)
-            if offer is None:
-                update("empty", "Fila vazia. Inicie outra rodada quando quiser consultar de novo.")
-                return
-            run["offer"] = offer
-            if skip_offer is not None:
-                if offer != skip_offer:
-                    raise ApiError("A tarefa ou seu estado mudou. Nada foi pulado.", 409)
-                endpoint = "task/skip-browse" if offer["state"] == "available" else "task/skip"
-                api.request(endpoint, {**fields, "task_id": offer["task_id"], "is_refill": offer["is_refill"]}, write=True)
-                update("done", "Tarefa pulada no Viralize.")
-                return
-            if offer.get("completion_state", "pending") != "pending":
-                update("attention", "A ação existente não está pendente. Não foi executada novamente.")
-                return
-            step = viralize_step(task)
-            if step is None or (step["command"] == "seguir" and step["target"].casefold() == fields["username"].casefold()):
-                update("attention", "Tarefa incompatível com esta sessão do Instagram. Você pode pulá-la.", True)
-                return
-            with self.lock:
-                self.viralize_require_current(session_id, run)
-                if not self.dependency_check():
-                    raise ApiError("O módulo Python do Instagram ainda não está instalado.", 503)
-            if offer["state"] == "available":
-                update("running", "Aceitando a tarefa no Viralize…")
-                accepted = api.request("task/accept", {**fields, "task_id": offer["task_id"], "is_refill": offer["is_refill"]}, write=True)
-                completion = accepted.get("completion")
-                completion_id = viralize_id(accepted.get("completion_id") or (completion.get("id") if isinstance(completion, dict) else None))
-                offer.update(state="active", completion_id=completion_id, completion_state="pending")
-            with self.lock:
-                self.viralize_require_current(session_id, run)
-                key = f'{offer["task_id"]}:{offer["completion_id"]}:{int(offer["is_refill"])}'
-                attempts = self.data.setdefault("viralize_attempts", {}).setdefault(run["account_id"], [])
-                if key in attempts:
-                    update("attention", "Esta ação já foi tentada pelo Ramos Bot. Confira o resultado; não será repetida.", True)
+            while completed_count < MAX_VIRALIZE_TASKS_PER_ROUND:
+                with self.lock:
+                    self.viralize_require_current(session_id, run)
+                update("running", "Consultando a fila do Viralize…" if completed_count == 0 else f"Tarefa {completed_count} concluída. Buscando a próxima…")
+                queue = api.request("task", {**fields, "type": run["type"]})
+                with self.lock:
+                    self.viralize_require_current(session_id, run)
+                offer, task = viralize_offer(queue)
+                if offer is None:
+                    message = "Fila vazia. Inicie outra rodada quando quiser consultar de novo." if completed_count == 0 else f"Rodada concluída: {completed_count} tarefa(s) enviada(s) para análise."
+                    update("empty", message)
                     return
-                attempts.append(key)
-                del attempts[:-500]
-                self.save()
-                self.start(session_id, {**step, "mode": "command"}, viralize_run=run)
-                job = self.jobs[session_id]
-            update("running", "Executando o alvo da tarefa no Instagram…")
-            if not job["finished"].wait(610):
-                raise ApiError("O executor do Instagram não confirmou o fim da ação.", 504)
-            with self.lock:
-                self.viralize_require_current(session_id, run)
-            expected = "seguindo" if step["command"] == "seguir" else "curtida"
-            if not job["success"] or (job["result"] or {}).get("estado") != expected:
-                update("attention", "A ação não foi confirmada como executada. Nada foi enviado para análise.", True)
-                return
-            update("running", "Ação confirmada pelo Instagram. Enviando para análise…")
-            api.request("task/confirm-analysis", {**fields, "completion_id": offer["completion_id"], "is_refill": offer["is_refill"]}, write=True)
-            update("done", "Enviada para análise no Viralize. O crédito depende da validação.")
+                run["offer"] = offer
+                if skip_offer is not None:
+                    if offer != skip_offer:
+                        raise ApiError("A tarefa ou seu estado mudou. Nada foi pulado.", 409)
+                    endpoint = "task/skip-browse" if offer["state"] == "available" else "task/skip"
+                    api.request(endpoint, {**fields, "task_id": offer["task_id"], "is_refill": offer["is_refill"]}, write=True)
+                    update("done", "Tarefa pulada no Viralize.")
+                    return
+                if offer.get("completion_state", "pending") != "pending":
+                    update("attention", "A ação existente não está pendente. Não foi executada novamente.")
+                    return
+                step = viralize_step(task)
+                if step is None or (step["command"] == "seguir" and step["target"].casefold() == fields["username"].casefold()):
+                    update("attention", "Tarefa incompatível com esta sessão do Instagram. Você pode pulá-la.", True)
+                    return
+                with self.lock:
+                    self.viralize_require_current(session_id, run)
+                    if not self.dependency_check():
+                        raise ApiError("O módulo Python do Instagram ainda não está instalado.", 503)
+                if offer["state"] == "available":
+                    update("running", "Aceitando a tarefa no Viralize…")
+                    accepted = api.request("task/accept", {**fields, "task_id": offer["task_id"], "is_refill": offer["is_refill"]}, write=True)
+                    completion = accepted.get("completion")
+                    completion_id = viralize_id(accepted.get("completion_id") or (completion.get("id") if isinstance(completion, dict) else None))
+                    offer.update(state="active", completion_id=completion_id, completion_state="pending")
+                with self.lock:
+                    self.viralize_require_current(session_id, run)
+                    key = f'{offer["task_id"]}:{offer["completion_id"]}:{int(offer["is_refill"])}'
+                    attempts = self.data.setdefault("viralize_attempts", {}).setdefault(run["account_id"], [])
+                    if key in attempts:
+                        update("attention", "Esta ação já foi tentada pelo Ramos Bot. Confira o resultado; não será repetida.", True)
+                        return
+                    attempts.append(key)
+                    del attempts[:-500]
+                    self.save()
+                    self.start(session_id, {**step, "mode": "command"}, viralize_run=run)
+                    job = self.jobs[session_id]
+                update("running", "Executando o alvo da tarefa no Instagram…")
+                if not job["finished"].wait(610):
+                    raise ApiError("O executor do Instagram não confirmou o fim da ação.", 504)
+                with self.lock:
+                    self.viralize_require_current(session_id, run)
+                expected = "seguindo" if step["command"] == "seguir" else "curtida"
+                if not job["success"] or (job["result"] or {}).get("estado") != expected:
+                    update("attention", "A ação não foi confirmada como executada. Nada foi enviado para análise.", True)
+                    return
+                update("running", "Ação confirmada pelo Instagram. Enviando para análise…")
+                api.request("task/confirm-analysis", {**fields, "completion_id": offer["completion_id"], "is_refill": offer["is_refill"]}, write=True)
+                completed_count += 1
+            update("done", f"Rodada encerrada após {MAX_VIRALIZE_TASKS_PER_ROUND} tarefas por segurança.")
         except ApiError as error:
             update("stopped" if run["stop"] else "error", str(error))
         except Exception:

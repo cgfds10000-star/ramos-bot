@@ -119,7 +119,7 @@ export default function MacrosPage({ sessions, api, refresh, status, online }) {
         </select>
       </label>
       <button type="button" className="macro-start-button" disabled={!canStart} onClick={() => send('start', selected)}><Play aria-hidden="true"/>Iniciar</button>
-      <p className="macro-execution-note">Uma tarefa por sessão em cada rodada. Só ações confirmadas pelo Instagram são enviadas para análise.</p>
+      <p className="macro-execution-note">A rodada continua buscando tarefas até a fila ficar vazia. Só ações confirmadas pelo Instagram são enviadas para análise.</p>
       <ul className="macro-run-list" aria-live="polite">
         {sessions.filter(session => status[session.id] || messages[session.id]).map(session => {
           const run = status[session.id];

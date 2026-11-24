@@ -39,6 +39,7 @@
 .macro-stopped.is-running{border-color:#9e39d5;background:linear-gradient(115deg,#66218a,#391b55);color:#f3d8ff}
 .macro-task-type{grid-area:type;min-width:0}
 .macro-start-button{grid-area:start;display:flex;align-items:center;justify-content:center;gap:max(9px,calc(20 * var(--m)));width:100%;min-height:44px;padding:max(8px,calc(10 * var(--m))) max(16px,calc(43 * var(--m)));margin-top:max(20px,calc(26 * var(--m)));border:1px solid #7f7093;border-radius:max(13px,calc(20 * var(--m)));background:linear-gradient(110deg,#51455f,#3f344e);box-shadow:inset 0 0 9px #a794c044;font-size:max(1rem,calc(31 * var(--m)));line-height:1.2;font-weight:700;color:#ada6ba}
+.macro-start-button:not(:disabled){border-color:#c207f6;background:radial-gradient(ellipse at 50% -90%,#e43bff,transparent 62%),linear-gradient(110deg,#9c00ef,#6800d0 58%,#9b00f0);box-shadow:inset 0 0 17px #d526ff88,0 0 8px #b900f955;color:#fff}
 .macro-start-button:disabled,.macro-apply-button:disabled{cursor:not-allowed;filter:saturate(.45);opacity:.58}
 .macro-start-button svg{width:max(22px,calc(38 * var(--m)));height:max(22px,calc(38 * var(--m)));stroke-width:1.8}
 .macro-execution-note{grid-area:note;margin-top:max(7px,calc(6 * var(--m)));font-size:max(.875rem,calc(26 * var(--m)));line-height:1.35;color:#cfddfa}
