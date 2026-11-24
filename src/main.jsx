@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Bot, Bell, CalendarDays, ChevronLeft, CircleHelp, Code2, Copy, Download, Ellipsis, Eye, EyeOff, Fingerprint, Layers3, Link2, List, LoaderCircle, Menu, Monitor, Play, Plus, Power, Radio, RefreshCw, Search, Settings2, ShieldCheck, Square, Terminal, Trash2, Upload, UsersRound, UserRound, Workflow, X } from 'lucide-react';
 import { RamosApi, parseCommand, selectSession, sessionBusy, statusLabel } from './api.js';
+import VerificationForm from './VerificationForm.jsx';
 import './styles.css';
 
 const api = new RamosApi();
@@ -28,7 +29,6 @@ function App() {
   const [password, setPassword] = useState('');
   const [handle, setHandle] = useState('');
   const [visiblePassword, setVisiblePassword] = useState(false);
-  const [code, setCode] = useState('');
   const [command, setCommand] = useState('');
   const [localLogs, setLocalLogs] = useState([]);
   const [proxyUrl, setProxyUrl] = useState('');
@@ -75,9 +75,8 @@ function App() {
     localStorage.setItem('ramos.selected', selected);
     const current = selectSession(state, selected);
     setHandle(state.accounts.find(item => item.id === current?.account_id)?.username || '');
-    setPassword(''); setCode(''); setCommand(''); setError('');
+    setPassword(''); setCommand(''); setError('');
   }, [selected, account?.id]);
-  useEffect(() => { setCode(''); }, [session?.challenge?.id]);
   useEffect(() => { if (terminalRef.current) terminalRef.current.scrollTop = terminalRef.current.scrollHeight; }, [state.logs.length, localLogs.length, session?.id]);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 3500); return () => clearTimeout(timer); }, [toast]);
 
@@ -261,7 +260,7 @@ function App() {
             {session?.authenticated && !busy && <div className="terminal-ready"><span>&gt;</span> Pronto para o próximo comando<span className="terminal-cursor"/></div>}
           </div>}
 
-          {session?.challenge && <form className="verification" onSubmit={event => { event.preventDefault(); const enteredCode = code; setCode(''); act(() => api.post(`/sessions/${session.id}/input`, { code: enteredCode, challenge_id: session.challenge.id })); }}><ShieldCheck size={21}/><div><strong>Verificação em duas etapas</strong><p>{session.challenge.message}</p><div className="verification-row"><input autoFocus autoComplete="one-time-code" inputMode="numeric" pattern={session.challenge.kind === 'authenticator' ? '[0-9]{6}' : '[0-9]{6,8}'} aria-label="Código de verificação" placeholder="000000" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, '').slice(0, session.challenge.kind === 'authenticator' ? 6 : 8))} required/><button className="small-button" disabled={pending || code.length < 6}>Confirmar</button></div></div></form>}
+          {session?.challenge && <VerificationForm key={`${session.id}:${session.challenge.id}`} api={api} sessionId={session.id} challenge={session.challenge} pending={pending} online={online} onSubmitted={refresh}/>}
         </div>
 
         {session?.authenticated && <form className="command-bar" onSubmit={runCommand}><span>&gt;</span><input aria-label="Comando do terminal" placeholder="Digite um comando ou ajuda" value={command} onChange={event => setCommand(event.target.value)} disabled={busy || !online || pending} autoComplete="off" spellCheck="false"/><IconButton label="Executar comando" type="submit" disabled={busy || !online || pending || !command.trim()}><Terminal size={18}/></IconButton></form>}

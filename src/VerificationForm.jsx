@@ -1,0 +1,60 @@
+import React, {useCallback, useEffect, useRef, useState} from 'react';
+import {LoaderCircle, ShieldCheck} from 'lucide-react';
+import {resolveVerificationCode, verificationInputKind} from './totp.js';
+
+export default function VerificationForm({api, sessionId, challenge, pending, online, onSubmitted}) {
+  const [value, setValue] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const [sent, setSent] = useState(false);
+  const active = useRef(true);
+  const inFlight = useRef(false);
+  const autoAttempted = useRef(false);
+  const controller = useRef(null);
+  const afterSend = useRef(onSubmitted);
+  afterSend.current = onSubmitted;
+  const kind = verificationInputKind(value, challenge.kind);
+  const authenticator = challenge.kind === 'authenticator';
+
+  useEffect(() => { active.current = true; return () => { active.current = false; controller.current?.abort(); }; }, []);
+
+  const submit = useCallback(async () => {
+    if (inFlight.current || sent || !active.current) return;
+    inFlight.current = true;
+    autoAttempted.current = true;
+    setSending(true); setError('');
+    controller.current = new AbortController();
+    let entered = value;
+    setValue('');
+    try {
+      const code = await resolveVerificationCode(entered, challenge.kind, {now: () => api.serverNow(), signal: controller.current.signal});
+      entered = '';
+      if (!active.current) return;
+      await api.post(`/sessions/${sessionId}/input`, {code, challenge_id: challenge.id});
+      if (active.current) { setSent(true); await afterSend.current?.(); }
+    } catch (failure) {
+      if (active.current && failure.name !== 'AbortError') setError(failure.message);
+    } finally {
+      entered = '';
+      inFlight.current = false;
+      if (active.current) setSending(false);
+    }
+  }, [api, challenge.id, challenge.kind, sessionId, value, sent]);
+
+  useEffect(() => {
+    if (kind !== 'secret' || pending || sending || sent || !online || autoAttempted.current) return;
+    const timer = setTimeout(submit, 1200);
+    return () => clearTimeout(timer);
+  }, [kind, value, pending, sending, sent, online, submit]);
+
+  return <form className="verification" onSubmit={event => { event.preventDefault(); if (!pending && online && kind) submit(); }}>
+    <ShieldCheck size={21}/><div><strong>Verificação em duas etapas</strong>
+      <p>{authenticator ? 'Digite o código de 6 dígitos ou cole sua chave Base32, com ou sem espaços.' : challenge.message}</p>
+      <div className="verification-row"><input autoFocus type={authenticator ? 'password' : 'text'} autoComplete="one-time-code" inputMode={authenticator ? 'text' : 'numeric'} autoCapitalize="characters" spellCheck={false} maxLength={256} aria-label={authenticator ? 'Código 2FA ou chave Base32' : 'Código de verificação'} placeholder={authenticator ? 'Código ou chave Base32' : '000000'} value={value} onChange={event => { setValue(event.target.value); setError(''); }} disabled={sending || sent} required/>
+        <button className="small-button" disabled={pending || sending || sent || !online || !kind}>{sending ? <LoaderCircle className="spin" size={17}/> : 'Confirmar'}</button>
+      </div>
+      <p className="verification-hint" aria-live="polite">{sent ? 'Código enviado. Aguardando o Instagram…' : sending ? 'Preparando e enviando o código 2FA…' : authenticator ? 'A chave será convertida e enviada automaticamente ao terminar de digitar. Ela fica somente no navegador.' : 'Use o código recebido pelo método solicitado.'}</p>
+      {error && <div className="error-banner" role="alert">{error}</div>}
+    </div>
+  </form>;
+}

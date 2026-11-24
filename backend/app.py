@@ -155,6 +155,7 @@ class RamosService:
             data["logs"] = list(self.logs)
             data["csrf"] = self.csrf
             data["engine_ready"] = bool(self.dependency_check())
+            data["server_time_ms"] = int(time.time() * 1000)
             return data
 
     def start(self, session_id, payload):

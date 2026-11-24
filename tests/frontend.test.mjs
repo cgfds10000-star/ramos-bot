@@ -50,3 +50,13 @@ test('comandos preservam busca geral e seleção por ID', () => {
   assert.deepEqual(parseCommand('seguir --id 123456'), {command:'seguir',target:'123456',limit:10,by_id:true});
   for(const value of ['perfil --id abc','seguir --id','seguir usuario --geral','buscar nome --limite 5 --limite 6']) assert.throws(()=>parseCommand(value));
 });
+
+test('relógio TOTP acompanha o servidor mesmo quando o relógio local é diferente', async () => {
+  const original = global.fetch;
+  global.fetch = async () => new Response(JSON.stringify({server_time_ms: 1000000000000}), {headers: {'content-type': 'application/json'}});
+  try {
+    const api = new RamosApi();
+    await api.state();
+    assert.ok(api.serverNow() >= 1000000000000 && api.serverNow() < 1000000001000);
+  } finally { global.fetch = original; }
+});

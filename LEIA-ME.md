@@ -16,6 +16,7 @@ A primeira execução instala as dependências. O ZIP de entrega também inclui 
 - Criar, selecionar, pesquisar e remover sessões.
 - Conectar com usuário/senha, importar um `login.txt` escolhido por você ou reutilizar uma sessão salva.
 - 2FA por aplicativo autenticador, usando o contexto recebido na mesma tentativa de login. SMS/e-mail são apresentados quando o Instagram solicita um código de desafio.
+- No desafio do autenticador, aceite um código de 6 dígitos ou uma chave Base32 com ou sem espaços. Ao terminar de digitar/colar uma chave válida, o navegador gera o TOTP e envia o código após uma breve pausa. A chave não é enviada ao backend nem salva. O horário acompanha o servidor; se o código estiver prestes a expirar, aguarda a próxima janela. SMS/e-mail continuam aceitando somente códigos numéricos. Não há reenvio automático após uma falha.
 - A opção de aprovação por outro aparelho foi removida. Quando o servidor não fornece um contexto de código compatível, a tentativa é encerrada e seu diagnóstico pode ser exportado. Isso não contorna verificações obrigatórias do Instagram.
 - `buscar "nome" --limite 10`, `buscar "nome" --geral`, `perfil usuario`, `perfil --id 123456`, `seguir usuario`, `seguir --id 123456`, `curtir URL_OU_ID`.
 - Macros iniciadas pelo usuário, interrupção, proxy, logs e exportação do último resultado em JSON.

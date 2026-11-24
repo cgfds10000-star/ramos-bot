@@ -4,9 +4,11 @@ export class RamosApi {
   constructor(base = '') {
     this.base = trimBase(base);
     this.csrf = '';
+    this.serverClock = null;
   }
 
   async request(path, options = {}) {
+    const started = performance.now();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 12000);
     try {
@@ -25,6 +27,10 @@ export class RamosApi {
         throw failure;
       }
       if (body.csrf) this.csrf = body.csrf;
+      if (Number.isFinite(body.server_time_ms) && body.server_time_ms > 0) {
+        const received = performance.now();
+        this.serverClock = {time: body.server_time_ms + (received - started) / 2, received};
+      }
       return body;
     } catch (error) {
       if (error.name === 'AbortError') throw new Error('O servidor demorou para responder. Tente atualizar a conexão.');
@@ -34,6 +40,7 @@ export class RamosApi {
   }
 
   state() { return this.request('/state'); }
+  serverNow() { return this.serverClock ? this.serverClock.time + performance.now() - this.serverClock.received : Date.now(); }
   post(path, body = {}) { return this.request(path, { method: 'POST', body: JSON.stringify(body) }); }
   remove(path) { return this.request(path, { method: 'DELETE', body: '{}' }); }
 }
