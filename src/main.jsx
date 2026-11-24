@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Bot, Bell, CalendarDays, ChevronLeft, CircleHelp, Code2, Copy, Download, Ellipsis, Eye, EyeOff, Fingerprint, Layers3, Link2, List, LoaderCircle, Menu, Monitor, Play, Plus, Power, Radio, RefreshCw, Search, Settings2, ShieldCheck, Square, Terminal, Trash2, Upload, UsersRound, UserRound, Workflow, X } from 'lucide-react';
+import { Bot, Bell, CalendarDays, ChevronLeft, CircleHelp, Code2, Copy, Download, Ellipsis, EllipsisVertical, Eye, EyeOff, Fingerprint, Layers3, Link2, List, LoaderCircle, Menu, Monitor, Play, Plus, Power, Radio, RefreshCw, Search, Settings, Settings2, ShieldCheck, Square, Terminal, Trash2, Upload, UsersRound, UserRound, Workflow, X } from 'lucide-react';
 import { RamosApi, parseCommand, selectSession, sessionBusy, statusLabel } from './api.js';
 import VerificationForm from './VerificationForm.jsx';
 import './styles.css';
+import './reference.css';
 
 const api = new RamosApi();
 const empty = { sessions: [], accounts: [], macros: [], logs: [], proxy: { enabled: false }, settings: { two_factor_method: 'autenticador' } };
@@ -194,7 +195,7 @@ function App() {
 
   if (accessLocked) return <div className="panel-access"><div className="access-glow"/><div className="access-brand"><span>R</span>RAMOS BOT</div><form className="access-card" onSubmit={event => { event.preventDefault(); const entered = panelPassword; setPanelPassword(''); act(() => api.post('/access/login', {password:entered})); }}><div className="access-icon"><ShieldCheck size={30}/></div><span className="eyebrow">SEU ESPAÇO DE TRABALHO</span><h1>Bem-vindo ao<br/><span>Ramos Bot.</span></h1><p>Entre para gerenciar suas sessões e contas.</p><label>Senha do painel<input type="password" autoComplete="current-password" placeholder="Digite sua senha" value={panelPassword} onChange={event => setPanelPassword(event.target.value)} required maxLength={200}/></label><button className="primary-button" disabled={pending || !panelPassword}>{pending ? <LoaderCircle className="spin" size={20}/> : <Fingerprint size={20}/>}Entrar no painel</button>{error && <div className="error-banner" role="alert">{error}</div>}<span className="access-footnote"><ShieldCheck size={14}/>Acesso protegido</span></form></div>;
 
-  return <div className="app-shell">
+  return <div className={`app-shell ${workspaceOpen ? 'is-workspace' : 'is-home'}`}>
     <header className="header">
       <a className="brand" href="#" onClick={event => { event.preventDefault(); setPanel(null); setWorkspaceOpen(false); }} aria-label="Ramos Bot, início"><span className="brand-mark"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M5 5h24c20 0 20 26 3 26l14 14H32L14 26h14c9 0 9-11 0-11H15z" fill="currentColor"/><path d="M6 15l10 10v20H6z" fill="#00c8ed"/></svg></span><span>RAMOS <strong>BOT</strong></span></a>
       <div className="header-actions">
@@ -215,14 +216,14 @@ function App() {
       <button className="new-session-button" onClick={addSession} disabled={!online || pending}><Plus size={27}/>Nova sessão</button>
 
       {!workspaceOpen && <section className="sessions-home">
-        <div className="sessions-heading"><h2><Monitor size={23}/>Minhas sessões <span>({state.sessions.length})</span></h2><span className={`connection ${online ? 'is-online' : ''}`}><i/>{checking ? 'Conectando' : online ? 'Online' : 'Offline'}</span></div>
+        <div className="sessions-heading"><h2><Monitor size={23}/>Minhas Sessões <span>({state.sessions.length})</span></h2><span className={`connection ${online ? 'is-online' : ''}`}><i/>{checking ? 'Conectando' : online ? 'Online' : 'Offline'}</span></div>
         <label className="session-search"><Search size={20}/><input aria-label="Buscar sessão" placeholder="Buscar sessão..." value={filter} onChange={event => setFilter(event.target.value)}/></label>
         <div className="session-list">{state.sessions.filter(item => item.name.toLowerCase().includes(filter.toLowerCase())).map(item => <div className="session-row" key={item.id}>
           <button className="session-open" onClick={() => { setSelected(item.id); setWorkspaceOpen(true); }}><strong>{item.name}</strong><span><CalendarDays size={14}/>{item.created_at ? 'Criada em ' + new Date(item.created_at).toLocaleDateString('pt-BR') + ' às ' + new Date(item.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : 'Pronta para conectar'}</span></button>
           <span className={`session-pill ${item.authenticated ? 'active' : sessionBusy(item) ? 'working' : ''}`}><i/>{item.authenticated ? 'Ativa' : sessionBusy(item) ? (item.status === 'awaiting_input' ? '2FA' : 'Em uso') : 'Pronta'}</span>
-          <IconButton label={'Opções de ' + item.name} onClick={() => { setSelected(item.id); openPanel('menu'); }}><Ellipsis size={23}/></IconButton>
+          <IconButton label={'Opções de ' + item.name} onClick={() => { setSelected(item.id); openPanel('menu'); }}><EllipsisVertical size={23}/></IconButton>
         </div>)}{filter && !state.sessions.some(item => item.name.toLowerCase().includes(filter.toLowerCase())) && <p className="search-empty">Nenhuma sessão encontrada.</p>}</div>
-        <div className="session-illustration"><img src="/session-art.png" width="250" height="250" alt="Janelas roxas com uma conta e símbolo de adicionar"/><p>Selecione uma sessão para<br/>conectar sua conta.</p></div>
+        <div className="session-illustration"><span className="reference-illustration" role="img" aria-label="Janelas roxas com uma conta e símbolo de adicionar"/><p>Selecione uma sessão para<br/>conectar sua conta.</p></div>
         {error && <div className="error-banner" role="alert">{error}</div>}
       </section>}
 
@@ -276,7 +277,7 @@ function App() {
       </>}
     </main>
 
-    <nav className="bottom-nav" aria-label="Ferramentas"><button className={!panel ? 'active' : ''} onClick={() => { setPanel(null); setWorkspaceOpen(false); }}><Monitor size={24}/><span>Sessões</span></button><button className={panel === 'proxy' ? 'active' : ''} onClick={() => openPanel('proxy')}><ShieldCheck size={24}/><span>Proxy</span></button><button className={panel === 'macros' ? 'active' : ''} onClick={() => openPanel('macros')}><Bot size={24}/><span>Macros</span></button><button className={panel === 'logs' ? 'active' : ''} onClick={() => openPanel('logs')}><List size={24}/><span>Logs</span></button><button className={panel === 'settings' ? 'active' : ''} onClick={() => openPanel('settings')}><Settings2 size={24}/><span>Config.</span></button></nav>
+    <nav className="bottom-nav" aria-label="Ferramentas"><button className={!panel ? 'active' : ''} onClick={() => { setPanel(null); setWorkspaceOpen(false); }}><Monitor size={24}/><span>Sessões</span></button><button className={panel === 'proxy' ? 'active' : ''} onClick={() => openPanel('proxy')}><ShieldCheck size={24}/><span>Proxy</span></button><button className={panel === 'macros' ? 'active' : ''} onClick={() => openPanel('macros')}><Bot size={24}/><span>Macros</span></button><button className={panel === 'logs' ? 'active' : ''} onClick={() => openPanel('logs')}><List size={24}/><span>Logs</span></button><button className={panel === 'settings' ? 'active' : ''} onClick={() => openPanel('settings')}><Settings size={24}/><span>Config.</span></button></nav>
 
     {panel && <div className="modal-backdrop" onClick={event => { if (event.target === event.currentTarget) setPanel(null); }} onKeyDown={event => { if (event.key === 'Escape') setPanel(null); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabIndex={-1} ref={node => { if (node && !node.contains(document.activeElement)) node.focus(); }}><div className="modal-header"><div><span className="eyebrow">RAMOS BOT</span><h2 id="modal-title">{title}</h2></div><IconButton label="Fechar" onClick={() => setPanel(null)}><X size={22}/></IconButton></div>
       {panel === 'accounts' && <><p className="panel-intro">Contas salvas no seu Ramos Bot. Escolha uma para conectar na sessão atual.</p><div className="item-list">{state.accounts.map(item => <div className="list-item" key={item.id}><span className="avatar"><UserRound size={20}/></span><div><strong>@{item.username}</strong><small>{state.sessions.some(s => s.account_id === item.id && s.authenticated) ? 'Conectada' : item.has_session ? 'Sessão salva' : 'Aguardando login'}</small></div><button className="text-button" disabled={busy} onClick={() => { setHandle(item.username); setPassword(''); setPanel(null); }}>Usar</button><IconButton label={'Remover @' + item.username} disabled={pending || !online} onClick={() => act(() => api.remove(`/accounts/${item.id}`), 'Conta removida.')}><Trash2 size={16}/></IconButton></div>)}{!state.accounts.length && <div className="empty-state"><UsersRound size={28}/><strong>Nenhuma conta salva</strong><p>Adicione o usuário ou conecte sua primeira conta.</p></div>}</div><form className="panel-form" onSubmit={async event => { event.preventDefault(); const result = await act(() => api.post('/accounts', { username: newAccount }), 'Conta adicionada.'); if (result) setNewAccount(''); }}><label>Novo usuário<input value={newAccount} onChange={event => setNewAccount(event.target.value)} placeholder="usuario do Instagram" autoCapitalize="none" maxLength={30} required/></label><button className="primary-button" disabled={!online || pending}><Plus size={17}/>Adicionar conta</button></form></>}

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 890 752" preserveAspectRatio="none">
+<defs>
+<linearGradient id="base" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0c0819"/><stop offset=".56" stop-color="#0c061b"/><stop offset="1" stop-color="#19082e"/></linearGradient>
+<radialGradient id="ambient"><stop stop-color="#2e0757" stop-opacity=".6"/><stop offset="1" stop-color="#170824" stop-opacity="0"/></radialGradient>
+<linearGradient id="right" x1=".1" y1="1" x2="1" y2=".1"><stop stop-color="#7300b8"/><stop offset=".5" stop-color="#460d82"/><stop offset="1" stop-color="#220747"/></linearGradient>
+<linearGradient id="left" x1="0" y1="0" x2="1" y2=".8"><stop stop-color="#230b48"/><stop offset="1" stop-color="#6b00a4"/></linearGradient>
+<filter id="glow"><feGaussianBlur stdDeviation="8"/></filter>
+</defs>
+<rect width="890" height="752" fill="url(#base)"/>
+<ellipse cx="468" cy="488" rx="490" ry="370" fill="url(#ambient)"/>
+<path d="M0 664C81 682 154 720 226 752H0Z" fill="url(#left)"/>
+<path d="M634 752C735 695 818 649 890 598V752Z" fill="url(#right)"/>
+<path d="M789 752L884 614L826 752Z" fill="#3c0b70"/>
+<path d="M0 664C81 682 154 720 226 752M634 752C735 695 818 649 890 598" fill="none" stroke="#b400ff" stroke-width="3" filter="url(#glow)"/>
+<path d="M0 664C81 682 154 720 226 752M634 752C735 695 818 649 890 598" fill="none" stroke="#7b0ec3" stroke-width="1"/>
+</svg>
