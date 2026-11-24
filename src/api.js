@@ -19,7 +19,11 @@ export class RamosApi {
       const type = response.headers.get('content-type') || '';
       if (!type.includes('application/json')) throw new Error('O servidor do Ramos Bot não está disponível neste endereço.');
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Não foi possível concluir a operação.');
+      if (!response.ok) {
+        const failure = new Error(body.error || 'Não foi possível concluir a operação.');
+        failure.locked = Boolean(body.locked);
+        throw failure;
+      }
       if (body.csrf) this.csrf = body.csrf;
       return body;
     } catch (error) {

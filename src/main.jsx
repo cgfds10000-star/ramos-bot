@@ -22,6 +22,8 @@ function App() {
   const [toast, setToast] = useState('');
   const [panel, setPanel] = useState(null);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [accessLocked, setAccessLocked] = useState(false);
+  const [panelPassword, setPanelPassword] = useState('');
   const [filter, setFilter] = useState('');
   const [password, setPassword] = useState('');
   const [handle, setHandle] = useState('');
@@ -48,9 +50,11 @@ function App() {
     try {
       const next = await api.state();
       setState(next); setOnline(true);
+      setAccessLocked(false);
       if (showError) setError('');
     } catch (failure) {
       setOnline(false);
+      if (failure.locked) setAccessLocked(true);
       if (showError) setError(failure.message);
     } finally { poll.current = false; setChecking(false); }
   }
@@ -188,6 +192,8 @@ function App() {
   }
 
   const title = { accounts: 'Contas abertas', proxy: 'Proxy', macros: 'Macros', logs: 'Logs', settings: 'Configurações', help: 'Comandos do terminal', menu: 'Sua sessão', delete: 'Remover sessão?' }[panel];
+
+  if (accessLocked) return <div className="panel-access"><div className="access-glow"/><div className="access-brand"><span>R</span>RAMOS BOT</div><form className="access-card" onSubmit={event => { event.preventDefault(); const entered = panelPassword; setPanelPassword(''); act(() => api.post('/access/login', {password:entered})); }}><div className="access-icon"><ShieldCheck size={30}/></div><span className="eyebrow">SEU ESPAÇO DE TRABALHO</span><h1>Bem-vindo ao<br/><span>Ramos Bot.</span></h1><p>Entre para gerenciar suas sessões e contas.</p><label>Senha do painel<input type="password" autoComplete="current-password" placeholder="Digite sua senha" value={panelPassword} onChange={event => setPanelPassword(event.target.value)} required maxLength={200}/></label><button className="primary-button" disabled={pending || !panelPassword}>{pending ? <LoaderCircle className="spin" size={20}/> : <Fingerprint size={20}/>}Entrar no painel</button>{error && <div className="error-banner" role="alert">{error}</div>}<span className="access-footnote"><ShieldCheck size={14}/>Acesso protegido</span></form></div>;
 
   return <div className="app-shell">
     <header className="header">

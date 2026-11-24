@@ -143,6 +143,29 @@ class BackendChecks(unittest.TestCase):
             finally:
                 server.shutdown(); server.server_close(); thread.join()
 
+    def test_panel_login_uses_cookie_without_browser_popup(self):
+        with patch.dict(os.environ, {'RAMOS_ADMIN_PASSWORD':'synthetic-panel-password','RAMOS_API_KEY':''}):
+            server=make_server(self.service,0)
+            thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+            try:
+                conn=http.client.HTTPConnection('127.0.0.1',server.server_address[1])
+                conn.request('GET','/api/state'); response=conn.getresponse()
+                self.assertEqual(response.status,401)
+                self.assertIsNone(response.getheader('WWW-Authenticate'))
+                self.assertTrue(json.loads(response.read())['locked'])
+                conn.request('POST','/api/access/login',body=json.dumps({'password':'wrong'}),headers={'Content-Type':'application/json'})
+                response=conn.getresponse();self.assertEqual(response.status,401);response.read()
+                conn.request('POST','/api/access/login',body=json.dumps({'password':'synthetic-panel-password'}),headers={'Content-Type':'application/json'})
+                response=conn.getresponse();self.assertEqual(response.status,200)
+                cookie=response.getheader('Set-Cookie');self.assertIn('HttpOnly',cookie);self.assertIn('SameSite=Strict',cookie);response.read()
+                conn.request('GET','/api/state',headers={'Cookie':cookie.split(';',1)[0]})
+                response=conn.getresponse();self.assertEqual(response.status,200);response.read()
+                tampered=cookie.split(';',1)[0]+'x'
+                conn.request('GET','/api/state',headers={'Cookie':tampered})
+                response=conn.getresponse();self.assertEqual(response.status,401);response.read();conn.close()
+            finally:
+                server.shutdown();server.server_close();thread.join()
+
 
 if __name__ == '__main__':
     unittest.main()

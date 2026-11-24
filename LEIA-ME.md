@@ -41,7 +41,7 @@ npm test
 
 ## Executar em um servidor próprio
 
-O `Dockerfile` compila o React e executa o Python no mesmo serviço. Ao expor o painel, configure `RAMOS_ADMIN_PASSWORD` e `RAMOS_ENCRYPTION_KEY`; o servidor recusa inicializar publicamente sem proteção. O acesso ao painel usa o usuário `admin` e a senha configurada, seguido pelo login do Instagram dentro da página. Utilize HTTPS no proxy de entrada.
+O `Dockerfile` compila o React e executa o Python no mesmo serviço. Ao expor o painel, configure `RAMOS_ADMIN_PASSWORD` e `RAMOS_ENCRYPTION_KEY`; o servidor recusa inicializar publicamente sem proteção. O acesso ao painel usa a senha configurada no formulário da própria página. Depois, o login do Instagram e o código 2FA são informados dentro da sessão. Não há janela de autenticação do navegador. Utilize HTTPS no proxy de entrada.
 
 Gere a chave de criptografia com:
 

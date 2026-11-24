@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 from collections import deque
 import hmac
 import importlib.util
@@ -17,6 +18,7 @@ import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.cookies import SimpleCookie, CookieError
 from urllib.parse import urlsplit
 import uuid
 from storage import read_json as storage_read, write_json
@@ -424,15 +426,15 @@ class RamosHandler(BaseHTTPRequestHandler):
         same_host = urlsplit(origin or "").netloc == self.headers.get("Host", "")
         return origin is None or origin in self.server.allowed_origins or (bool(os.environ.get("RAMOS_ADMIN_PASSWORD")) and same_host)
 
-    def reply(self, code, value):
+    def reply(self, code, value, cookie=None):
         encoded = json.dumps(value, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(encoded)))
-        if code == 401 and os.environ.get("RAMOS_ADMIN_PASSWORD"):
-            self.send_header("WWW-Authenticate", 'Basic realm="Ramos Bot", charset="UTF-8"')
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
         if self.headers.get("Origin") in self.server.allowed_origins:
             self.send_header("Access-Control-Allow-Origin", self.headers["Origin"])
             self.send_header("Vary", "Origin")
@@ -443,18 +445,21 @@ class RamosHandler(BaseHTTPRequestHandler):
         host = urlsplit("http://" + self.headers.get("Host", "")).hostname
         api_key = os.environ.get("RAMOS_API_KEY", "")
         admin_password = os.environ.get("RAMOS_ADMIN_PASSWORD", "")
-        basic_valid = False
+        panel_valid = False
         if admin_password:
             try:
-                supplied = base64.b64decode(self.headers.get("Authorization", "").removeprefix("Basic "), validate=True).decode("utf-8")
-                basic_valid = hmac.compare_digest(supplied, "admin:" + admin_password)
-            except (ValueError, UnicodeError):
+                cookies = SimpleCookie(self.headers.get("Cookie", ""))
+                token = cookies["ramos_access"].value
+                expiry, nonce, signature = token.split(".")
+                expected = self.access_signature(expiry + "." + nonce)
+                panel_valid = int(expiry) > time.time() and hmac.compare_digest(signature, expected)
+            except (ValueError, KeyError, CookieError):
                 pass
         if api_key:
-            if not basic_valid and not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + api_key):
+            if not panel_valid and not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + api_key):
                 raise ApiError("Acesso não autorizado.", 401)
         elif admin_password:
-            if not basic_valid:
+            if not panel_valid:
                 raise ApiError("Acesso não autorizado.", 401)
         elif host not in {"127.0.0.1", "localhost", "::1"}:
             raise ApiError("Origem não autorizada.", 403)
@@ -462,6 +467,33 @@ class RamosHandler(BaseHTTPRequestHandler):
             raise ApiError("Origem não autorizada.", 403)
         if mutation and not hmac.compare_digest(self.headers.get("X-Ramos-CSRF", ""), self.server.service.csrf):
             raise ApiError("Atualize a página antes de continuar.", 403)
+
+    def access_signature(self, payload):
+        key = (os.environ.get("RAMOS_ADMIN_PASSWORD", "") + os.environ.get("RAMOS_ENCRYPTION_KEY", "")).encode()
+        return hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
+
+    def panel_login(self):
+        try:
+            if not self.allowed_origin():
+                raise ApiError("Origem não autorizada.", 403)
+            if not self.headers.get("Content-Type", "").startswith("application/json"):
+                raise ApiError("Envie os dados no formato JSON.", 415)
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 4096:
+                raise ApiError("Requisição inválida.")
+            body = json.loads(self.rfile.read(length))
+            expected = os.environ.get("RAMOS_ADMIN_PASSWORD", "")
+            supplied = body.get("password", "") if isinstance(body, dict) else ""
+            if not expected or not isinstance(supplied, str) or not hmac.compare_digest(supplied.encode(), expected.encode()):
+                raise ApiError("Senha do painel inválida.", 401)
+            payload = str(int(time.time()) + 43200) + "." + secrets.token_urlsafe(18)
+            token = payload + "." + self.access_signature(payload)
+            secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" or os.environ.get("RAMOS_HOST") == "0.0.0.0" else ""
+            self.reply(200, {"ok": True}, cookie="ramos_access=" + token + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200" + secure)
+        except ApiError as error:
+            self.reply(error.status, {"error": str(error), "locked": True})
+        except (ValueError, UnicodeError):
+            self.reply(400, {"error": "Requisição inválida.", "locked": True})
 
     def do_OPTIONS(self):
         if not self.allowed_origin():
@@ -476,8 +508,9 @@ class RamosHandler(BaseHTTPRequestHandler):
         try:
             if urlsplit(self.path).path == "/api/health":
                 return self.reply(200, {"ok": True})
-            self.access()
             path = urlsplit(self.path).path
+            if path.startswith("/api/") or not os.environ.get("RAMOS_ADMIN_PASSWORD"):
+                self.access()
             if path == "/api/state":
                 return self.reply(200, self.server.service.snapshot())
             if path.startswith("/api/diagnostic/"):
@@ -507,7 +540,7 @@ class RamosHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
         except ApiError as error:
-            self.reply(error.status, {"error": str(error)})
+            self.reply(error.status, {"error": str(error), "locked": error.status == 401 and bool(os.environ.get("RAMOS_ADMIN_PASSWORD"))})
         except (OSError, ValueError):
             self.reply(500, {"error": "Não foi possível ler os dados do servidor."})
 
@@ -539,6 +572,8 @@ class RamosHandler(BaseHTTPRequestHandler):
             self.reply(500, {"error": "Não foi possível salvar esta alteração."})
 
     def do_POST(self):
+        if urlsplit(self.path).path == "/api/access/login":
+            return self.panel_login()
         self.mutation("POST")
 
     def do_DELETE(self):
