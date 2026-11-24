@@ -1,0 +1,20 @@
+{
+  "name": "ramos-bot-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "vite build && node scripts/build-worker.mjs",
+    "check": "node --check scripts/build-worker.mjs",
+    "test": "node --test tests/frontend.test.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}

@@ -1,0 +1,82 @@
+const trimBase = value => String(value || '').trim().replace(/\/+$/, '');
+
+export class RamosApi {
+  constructor(base = '') {
+    this.base = trimBase(base);
+    this.csrf = '';
+  }
+
+  async request(path, options = {}) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+    try {
+      const response = await fetch(`${this.base}/api${path}`, {
+        ...options,
+        headers: { 'Content-Type': 'application/json', ...(this.csrf ? { 'X-Ramos-CSRF': this.csrf } : {}), ...options.headers },
+        signal: controller.signal,
+        cache: 'no-store',
+      });
+      const type = response.headers.get('content-type') || '';
+      if (!type.includes('application/json')) throw new Error('O servidor do Ramos Bot não está disponível neste endereço.');
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Não foi possível concluir a operação.');
+      if (body.csrf) this.csrf = body.csrf;
+      return body;
+    } catch (error) {
+      if (error.name === 'AbortError') throw new Error('O servidor demorou para responder. Tente atualizar a conexão.');
+      if (error instanceof TypeError) throw new Error('Sem conexão com o servidor do Ramos Bot.');
+      throw error;
+    } finally { clearTimeout(timer); }
+  }
+
+  state() { return this.request('/state'); }
+  post(path, body = {}) { return this.request(path, { method: 'POST', body: JSON.stringify(body) }); }
+  remove(path) { return this.request(path, { method: 'DELETE', body: '{}' }); }
+}
+
+export function parseCommand(input) {
+  const tokens = String(input).trim().match(/"[^"]*"|'[^']*'|\S+/g) || [];
+  const parts = tokens.map(value => /^['"]/.test(value) ? value.slice(1, -1) : value);
+  const command = (parts.shift() || '').toLowerCase();
+  if (!command) return null;
+  if (['ajuda', 'help', 'limpar', 'clear', 'status', 'login', 'sair'].includes(command)) {
+    if (parts.length) throw new Error('Esse comando não recebe argumentos.');
+    return { command };
+  }
+  if (!['buscar', 'perfil', 'seguir', 'curtir'].includes(command)) throw new Error('Comando desconhecido. Digite ajuda para ver as opções.');
+  let limit = 10, byId = false, general = false;
+  const targets = [];
+  const flags = new Set();
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (!part.startsWith('--')) { targets.push(part); continue; }
+    if (flags.has(part)) throw new Error('Não repita as opções do comando.');
+    flags.add(part);
+    if (part === '--limite' && command === 'buscar') {
+      limit = Number(parts[++i]);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error('O limite precisa estar entre 1 e 50.');
+    } else if (part === '--id' && ['perfil', 'seguir'].includes(command)) {
+      byId = true; targets.push(parts[++i] || '');
+    } else if (part === '--geral' && command === 'buscar') general = true;
+    else throw new Error('Opção inválida. Digite ajuda para ver os comandos.');
+  }
+  const target = targets.join(' ').trim();
+  if (!target) throw new Error('Informe o perfil, termo de busca ou link da publicação.');
+  if (command !== 'buscar' && targets.length !== 1) throw new Error('Informe apenas um perfil ou link.');
+  if (byId && !/^[1-9][0-9]{0,29}$/.test(target)) throw new Error('Informe um ID numérico válido.');
+  return { command, target, limit, ...(byId ? { by_id: true } : {}), ...(general ? { general: true } : {}) };
+}
+
+export function selectSession(state, selected) {
+  const sessions = state?.sessions || [];
+  return sessions.find(item => item.id === selected) || sessions[0] || null;
+}
+
+export function sessionBusy(session) {
+  return ['connecting', 'running', 'awaiting_input'].includes(session?.status);
+}
+
+export const statusLabel = status => ({
+  disconnected: 'Aguardando autenticação', connecting: 'Autenticando conta', connected: 'Sessão ativa',
+  running: 'Executando comando', awaiting_input: 'Verificação necessária', error: 'Conexão interrompida',
+}[status] || 'Aguardando autenticação');

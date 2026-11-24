@@ -1,0 +1,10 @@
+.git
+.openai
+node_modules
+.venv
+data
+dist
+.env*
+__pycache__
+upload
+*.zip
