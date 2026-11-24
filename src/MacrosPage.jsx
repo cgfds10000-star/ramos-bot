@@ -1,8 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, Eye, EyeOff, KeyRound, Minus, Monitor, Play, Plus } from 'lucide-react';
 
+const VIRALIZE_KEY_STORAGE = 'ramos.viralize.apiKey';
+const VIRALIZE_KEY_PATTERN = /^vzs_[A-Za-z0-9_-]{1,480}$/;
+
 export default function MacrosPage({ sessions, api, refresh, status, online }) {
-  const [apiKey, setApiKey] = useState('');
+  const [apiKey, setApiKey] = useState(() => {
+    try { return localStorage.getItem(VIRALIZE_KEY_STORAGE) || ''; }
+    catch { return ''; }
+  });
   const [showKey, setShowKey] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
   const [linkedIds, setLinkedIds] = useState([]);
@@ -16,7 +22,7 @@ export default function MacrosPage({ sessions, api, refresh, status, online }) {
   const allSelected = eligible.length > 0 && selected.length === eligible.length;
   const someSelected = selected.length > 0 && !allSelected;
   const running = Object.values(status).some(run => run.status === 'running');
-  const validKey = /^vzs_[A-Za-z0-9_-]{1,480}$/.test(apiKey.trim());
+  const validKey = VIRALIZE_KEY_PATTERN.test(apiKey.trim());
   const numericLimit = Number(taskLimit);
   const validLimit = Number.isInteger(numericLimit) && numericLimit >= 1 && numericLimit <= 500;
   const canApply = online && !busy && validKey && selected.length > 0 && !running;
@@ -31,6 +37,14 @@ export default function MacrosPage({ sessions, api, refresh, status, online }) {
     setSelectedIds(ids => ids.filter(id => activeIds.has(id)));
     setLinkedIds(ids => ids.filter(id => activeIds.has(id)));
   }, [sessions]);
+
+  useEffect(() => {
+    try {
+      const normalized = apiKey.trim();
+      if (VIRALIZE_KEY_PATTERN.test(normalized)) localStorage.setItem(VIRALIZE_KEY_STORAGE, normalized);
+      else if (!normalized) localStorage.removeItem(VIRALIZE_KEY_STORAGE);
+    } catch { /* armazenamento local pode estar bloqueado pelo navegador */ }
+  }, [apiKey]);
 
   function toggleSession(id) {
     setSelectedIds(ids => ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id]);
@@ -86,7 +100,7 @@ export default function MacrosPage({ sessions, api, refresh, status, online }) {
         </button>
       </div>
 
-      <p className="macro-flow-note">Use o token do Viralize. Ele não é salvo e não substitui o login do Instagram.</p>
+      <p className="macro-flow-note">A chave fica salva somente neste navegador e só é enviada ao Viralize quando você vincula ou inicia uma rodada.</p>
 
       <fieldset className="macro-sessions" disabled={busy || running}>
         <legend>Sessões para executar</legend>

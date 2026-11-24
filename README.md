@@ -31,7 +31,7 @@ O núcleo usa o `instagram_login_apk.py` fornecido, com `instagrapi==3.2.19`. Um
 3. O executor Python usa o perfil ou a publicação da tarefa. O Viralize só recebe a ação para análise após a confirmação do Instagram. Solicitações pendentes, curtidas que já existiam e ações inconclusivas não são enviadas. A recompensa depende da análise do Viralize.
 4. **Pular tarefa** aparece quando é possível ignorar a oferta ou encerrar a ação aceita. **Interromper** cancela a rodada quando possível; não desfaz solicitações já enviadas. O andamento também aparece no terminal da sessão.
 
-O token fica em memória, é enviado por Bearer à API oficial e não é salvo nos dados ou no terminal. Só Instagram é executado nesta integração; não são postados comentários nem executadas tarefas de TikTok. O login e o 2FA existentes não mudam.
+O token fica salvo somente no armazenamento local do navegador deste painel, é enviado por Bearer à API oficial apenas nas ações do Viralize e não é salvo pelo backend, nos dados da sessão ou no terminal. Só Instagram é executado nesta integração; não são postados comentários nem executadas tarefas de TikTok. O login e o 2FA existentes não mudam.
 
 Se o painel mostrar um bloqueio do Cloudflare, o fato de o site abrir no navegador não garante que o servidor do Ramos Bot consiga acessar a API. Envie o código do bloqueio e o ID da requisição, quando exibido, ao suporte do Viralize para verificar o acesso da integração. Não envie seu token ao suporte.
 
