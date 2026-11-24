@@ -1,0 +1,47 @@
+.app-shell.is-macros{--m:calc(100cqw / 981);padding-bottom:calc(16px + env(safe-area-inset-bottom))}
+.app-shell.is-macros:after{display:none}
+.macros-page{display:grid;gap:max(12px,calc(20 * var(--m)));margin:max(20px,calc(35 * var(--m))) calc(25 * var(--m)) 0}
+.macro-plugin-card,.macro-execution-card{position:relative;isolation:isolate;overflow:hidden;border:1px solid #c113f6;border-radius:max(20px,calc(36 * var(--m)));background:radial-gradient(ellipse at 30% 0%,#4e066b50,transparent 48%),radial-gradient(ellipse at 100% 100%,#4d00806e,transparent 48%),linear-gradient(130deg,#130720,#0c0519 65%,#1d062e);box-shadow:inset 0 2px 6px #e65affb3,inset 0 0 22px #b200ff35,0 0 2px #bf13f6}
+.macro-plugin-card:after,.macro-execution-card:after{content:'';position:absolute;z-index:-1;left:0;right:0;bottom:0;height:calc(55 * var(--m));background:url('/macros-reference.png') calc(-26 * var(--m)) calc(-858 * var(--m)) / calc(981 * var(--m)) calc(1602 * var(--m)) no-repeat;pointer-events:none;mask-image:linear-gradient(transparent,#000 16%)}
+.macro-plugin-card{padding:max(15px,calc(27 * var(--m))) calc(32 * var(--m)) max(24px,calc(57 * var(--m)))}
+.macro-card-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:max(46px,calc(73 * var(--m)));margin-bottom:max(12px,calc(0 * var(--m)));padding-inline:calc(5 * var(--m))}
+.macro-card-heading h1,.macro-execution-card h2{font-size:max(1.25rem,calc(34 * var(--m)));line-height:1.2;font-weight:700;letter-spacing:0;color:#fff}
+.viralize-logo{display:block;flex-shrink:0;width:max(75px,calc(155 * var(--m)));height:max(34px,calc(68 * var(--m)));background:url('/macros-reference.png') calc(-758 * var(--m)) calc(-153 * var(--m)) / calc(981 * var(--m)) calc(1602 * var(--m)) no-repeat;mask-image:linear-gradient(90deg,transparent,#000 4%,#000 98%,transparent);}
+.macro-api-field{display:flex;align-items:center;gap:max(10px,calc(28 * var(--m)));height:max(48px,calc(80 * var(--m)));padding-left:max(12px,calc(28 * var(--m)));border:2px solid #df10ff;border-radius:max(13px,calc(20 * var(--m)));background:linear-gradient(110deg,#242135,#151123 62%,#21152f);box-shadow:inset 0 0 10px #a567d330,0 0 3px #dc0aff77;color:#fff}
+.macro-api-field>svg{width:max(24px,calc(44 * var(--m)));height:max(24px,calc(44 * var(--m)));flex-shrink:0;stroke-width:1.8}
+.macro-api-field input{flex:1;min-width:0;width:100%;height:100%;padding:0;background:none;border:0;outline:none;color:#fff;font-size:max(1rem,calc(31 * var(--m)));line-height:1.25;letter-spacing:0}
+.macro-api-field input::placeholder{color:#b5b1c4;opacity:1}
+.macro-api-field:focus-within{box-shadow:0 0 0 2px #bf6aff55,inset 0 0 12px #9d2bf333}
+.macro-api-field input:focus-visible{outline:none}
+.macro-key-toggle{display:grid;place-items:center;align-self:stretch;flex-shrink:0;min-width:44px;width:calc(85 * var(--m));padding:0;background:transparent;color:#fff;border-radius:inherit}
+.macro-key-toggle svg{width:max(24px,calc(46 * var(--m)));height:max(24px,calc(46 * var(--m)));stroke-width:1.8}
+.macro-sessions{border:0;min-width:0;padding:0;margin:max(20px,calc(29 * var(--m))) 0 0}
+.macro-sessions legend{display:block;float:left;width:100%;padding:0 calc(5 * var(--m));margin:0 0 max(13px,calc(19 * var(--m)));font-size:max(1.125rem,calc(34 * var(--m)));line-height:1.25;font-weight:700;color:#fff}
+.macro-session-options{display:grid;gap:max(7px,calc(10 * var(--m)))}
+.macro-session-option{display:flex;position:relative;align-items:center;gap:max(12px,calc(30 * var(--m)));min-height:max(46px,calc(71 * var(--m)));padding:max(5px,calc(10 * var(--m))) max(12px,calc(27 * var(--m)));border:1px solid #db52ee;border-radius:max(12px,calc(20 * var(--m)));background:linear-gradient(110deg,#21152f,#101020 68%,#21122e);box-shadow:inset 0 1px 7px #c664d738;cursor:pointer;color:#fff}
+.macro-select-all{clear:both;margin-bottom:max(7px,calc(10 * var(--m)));padding-left:max(14px,calc(36 * var(--m)))}
+.macro-session-option input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+.macro-session-option:focus-within{outline:2px solid #e5a4ff;outline-offset:3px}
+.macro-session-option:has(input:disabled){cursor:default}
+.macro-session-name{flex:1;min-width:0;font-size:max(1rem,calc(32 * var(--m)));line-height:1.25;font-weight:500;overflow-wrap:anywhere}
+.macro-session-icon{flex-shrink:0;width:max(26px,calc(47 * var(--m)));height:max(26px,calc(47 * var(--m)));stroke-width:1.9}
+.macro-checkbox{display:grid;place-items:center;flex-shrink:0;width:max(24px,calc(43 * var(--m)));height:max(24px,calc(43 * var(--m)));border:2px solid #f3edff;border-radius:max(5px,calc(10 * var(--m)));box-shadow:0 0 3px #eed5ff22}
+.macro-checkbox.is-checked{border:1px solid #d231ff;background:linear-gradient(145deg,#da23ff,#8000ef 70%,#ac00f3);box-shadow:inset 0 0 8px #ef8aff88,0 0 7px #b700ff35}
+.macro-checkbox svg{width:85%;height:85%;stroke-width:3}
+.macro-selection-count,.macro-empty-sessions{font-size:max(.875rem,calc(26 * var(--m)));line-height:1.4;color:#eee7fa;padding:0 calc(6 * var(--m));margin:max(7px,calc(7 * var(--m))) 0 0}
+.macro-empty-sessions{color:#bdb0cf;padding-block:10px}
+.macro-apply-button{display:flex;align-items:center;justify-content:center;gap:max(10px,calc(24 * var(--m)));width:calc(100% + 14 * var(--m));min-height:max(48px,calc(81 * var(--m)));margin:max(18px,calc(23 * var(--m))) calc(-7 * var(--m)) 0;padding:8px 14px;border:1px solid #c207f6;border-radius:max(16px,calc(29 * var(--m)));background:radial-gradient(ellipse at 50% -90%,#e43bff,transparent 62%),linear-gradient(110deg,#9c00ef,#6800d0 58%,#9b00f0);box-shadow:inset 0 0 17px #d526ff88,0 0 6px #b900f922;font-size:max(1.125rem,calc(39 * var(--m)));font-weight:700;line-height:1.2;color:#fff}
+.macro-apply-button:disabled{opacity:1}
+.macro-apply-button svg{width:max(27px,calc(45 * var(--m)));height:max(27px,calc(45 * var(--m)));stroke-width:2}
+.macro-execution-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:12px;padding:max(17px,calc(23 * var(--m))) calc(38 * var(--m)) max(18px,calc(24 * var(--m)))}
+.macro-execution-state h2{margin-bottom:max(9px,calc(10 * var(--m)))}
+.macro-stopped{display:inline-flex;align-items:center;justify-content:center;padding:max(4px,calc(6 * var(--m))) max(15px,calc(29 * var(--m)));border:1px solid #8e7ca5;border-radius:50px;background:linear-gradient(115deg,#6a5e7f,#463754);box-shadow:inset 0 0 8px #b4a2cc44;color:#fff;font-size:max(1rem,calc(29 * var(--m)));line-height:1.2;font-weight:600}
+.macro-start-button{display:flex;align-items:center;justify-content:center;gap:max(9px,calc(20 * var(--m)));min-height:44px;padding:max(8px,calc(10 * var(--m))) max(16px,calc(43 * var(--m)));margin-top:max(20px,calc(26 * var(--m)));border:1px solid #7f7093;border-radius:max(13px,calc(20 * var(--m)));background:linear-gradient(110deg,#51455f,#3f344e);box-shadow:inset 0 0 9px #a794c044;font-size:max(1rem,calc(31 * var(--m)));line-height:1.2;font-weight:700;color:#ada6ba}
+.macro-start-button:disabled{opacity:1}
+.macro-start-button svg{width:max(22px,calc(38 * var(--m)));height:max(22px,calc(38 * var(--m)));stroke-width:1.8}
+.macro-execution-card>p{grid-column:1/-1;margin-top:max(7px,calc(6 * var(--m)));font-size:max(.875rem,calc(26 * var(--m)));line-height:1.35;color:#cfddfa}
+.is-macros .bottom-nav{height:auto;margin-top:max(16px,calc(28 * var(--m)));padding:max(5px,calc(7 * var(--m)));gap:3px;border-radius:max(19px,calc(35 * var(--m)))}
+.is-macros .bottom-nav button{height:max(60px,calc(111 * var(--m)));min-height:0;gap:max(5px,calc(9 * var(--m)));font-size:max(.875rem,calc(27 * var(--m)));line-height:1.2;border-radius:max(15px,calc(29 * var(--m)))}
+.is-macros .bottom-nav svg{width:max(26px,calc(48 * var(--m)));height:max(26px,calc(48 * var(--m)))}
+.macro-visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+@media(max-width:520px){.viralize-logo{width:76px;height:34px;background-size:490.5px 801px;background-position:-379px -76.5px}.macro-plugin-card{padding-inline:13px}.macro-execution-card{padding-inline:17px}.macro-card-heading h1{font-size:1.25rem}.macro-api-field{gap:10px;padding-left:12px}.macro-execution-card h2{font-size:1.25rem}}
