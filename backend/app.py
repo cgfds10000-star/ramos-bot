@@ -112,12 +112,18 @@ class ViralizeApi:
     def __init__(self, token):
         self.token = token
         self.opener = build_opener(NoViralizeRedirect())
+        self.user_agent = os.environ.get("RAMOS_VIRALIZE_USER_AGENT", "Ramos-Bot/1.0")
 
     def request(self, endpoint, fields, *, write=False):
         base = "https://viralizesociais.com/api/" + endpoint
         url = base if write else base + "?" + urlencode(fields)
         body = json.dumps(fields).encode() if write else None
-        headers = {"Authorization": "Bearer " + self.token, "Accept": "application/json"}
+        headers = {
+            "Authorization": "Bearer " + self.token,
+            "Accept": "application/json",
+            "User-Agent": self.user_agent,
+            "X-Client-Name": "ramos-bot",
+        }
         if write:
             headers["Content-Type"] = "application/json"
         request = Request(url, data=body, headers=headers, method="POST" if write else "GET")

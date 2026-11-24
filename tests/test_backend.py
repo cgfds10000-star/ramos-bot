@@ -166,6 +166,8 @@ print(json.dumps({{"type": "done", "ok": True, "authenticated": True}}), flush=T
         request = send.call_args.args[0]
         self.assertEqual(request.full_url, 'https://viralizesociais.com/api/account/ensure')
         self.assertEqual(request.get_header('Authorization'), 'Bearer vzs_synthetic')
+        self.assertEqual(request.get_header('User-agent'), 'Ramos-Bot/1.0')
+        self.assertEqual(request.get_header('X-client-name'), 'ramos-bot')
         self.assertNotIn(b'vzs_synthetic', request.data)
         self.assertEqual(request.method, 'POST')
 
