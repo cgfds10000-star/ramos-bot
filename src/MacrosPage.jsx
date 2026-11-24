@@ -7,6 +7,7 @@ export default function MacrosPage({ sessions, api, refresh, status, online }) {
   const [selectedIds, setSelectedIds] = useState([]);
   const [linkedIds, setLinkedIds] = useState([]);
   const [taskType, setTaskType] = useState('follow');
+  const [taskLimit, setTaskLimit] = useState('50');
   const [busy, setBusy] = useState(false);
   const [messages, setMessages] = useState({});
   const allCheckbox = useRef(null);
@@ -16,8 +17,10 @@ export default function MacrosPage({ sessions, api, refresh, status, online }) {
   const someSelected = selected.length > 0 && !allSelected;
   const running = Object.values(status).some(run => run.status === 'running');
   const validKey = /^vzs_[A-Za-z0-9_-]{1,480}$/.test(apiKey.trim());
+  const numericLimit = Number(taskLimit);
+  const validLimit = Number.isInteger(numericLimit) && numericLimit >= 1 && numericLimit <= 500;
   const canApply = online && !busy && validKey && selected.length > 0 && !running;
-  const canStart = canApply && selected.every(session => linkedIds.includes(session.id));
+  const canStart = canApply && validLimit && selected.every(session => linkedIds.includes(session.id));
 
   useEffect(() => {
     if (allCheckbox.current) allCheckbox.current.indeterminate = someSelected;
@@ -41,7 +44,8 @@ export default function MacrosPage({ sessions, api, refresh, status, online }) {
         try {
           const path = `/sessions/${session.id}/${action === 'stop' ? 'stop' : `viralize/${action}`}`;
           setMessages(previous => ({ ...previous, [session.id]: action === 'link' ? 'Vinculando conta…' : action === 'start' ? 'Iniciando rodada…' : action === 'skip' ? 'Pulando tarefa…' : 'Interrompendo…' }));
-          await api.post(path, action === 'stop' ? {} : { token: apiKey.trim(), type: taskType });
+          const body = action === 'stop' ? {} : { token: apiKey.trim(), type: taskType, ...(action === 'start' ? { limit: numericLimit } : {}) };
+          await api.post(path, body);
           if (action === 'link') setLinkedIds(ids => [...new Set([...ids, session.id])]);
           setMessages(previous => ({ ...previous, [session.id]: action === 'link' ? 'Conta vinculada no Viralize.' : '' }));
         } catch (error) {
@@ -118,8 +122,11 @@ export default function MacrosPage({ sessions, api, refresh, status, online }) {
           <option value="follow,like">Seguir e curtir</option>
         </select>
       </label>
+      <label className="macro-task-limit">Limite da rodada
+        <input type="number" min="1" max="500" step="1" inputMode="numeric" value={taskLimit} onChange={event => setTaskLimit(event.target.value)} disabled={busy || running} aria-describedby="macro-limit-help"/>
+      </label>
       <button type="button" className="macro-start-button" disabled={!canStart} onClick={() => send('start', selected)}><Play aria-hidden="true"/>Iniciar</button>
-      <p className="macro-execution-note">A rodada continua buscando tarefas até a fila ficar vazia. Só ações confirmadas pelo Instagram são enviadas para análise.</p>
+      <p id="macro-limit-help" className="macro-execution-note">Escolha quantas tarefas cada sessão pode executar nesta rodada. A rodada termina antes se a fila ficar vazia.</p>
       <ul className="macro-run-list" aria-live="polite">
         {sessions.filter(session => status[session.id] || messages[session.id]).map(session => {
           const run = status[session.id];

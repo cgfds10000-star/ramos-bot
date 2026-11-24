@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 USERNAME = re.compile(r"[A-Za-z0-9_.]{1,30}")
 COMMANDS = {"buscar", "perfil", "seguir", "curtir"}
 BUSY = {"connecting", "running", "awaiting_input"}
-MAX_VIRALIZE_TASKS_PER_ROUND = 50
+MAX_VIRALIZE_TASKS_PER_ROUND = 500
 
 
 class ApiError(Exception):
@@ -466,6 +466,9 @@ class RamosService:
         token = body.get("token")
         if not isinstance(token, str) or not re.fullmatch(r"vzs_[A-Za-z0-9_-]{1,480}", token):
             raise ApiError("Informe um token do Viralize no formato vzs_…")
+        limit = body.get("limit", 50)
+        if type(limit) is not int or not 1 <= limit <= MAX_VIRALIZE_TASKS_PER_ROUND:
+            raise ApiError(f"O limite da rodada precisa estar entre 1 e {MAX_VIRALIZE_TASKS_PER_ROUND}.")
         with self.lock:
             session = self.session(session_id)
             if not session.get("authenticated"):
@@ -488,7 +491,7 @@ class RamosService:
                        "message": "Consultando a fila do Viralize…", "can_skip": False, "offer": None}
                 self.viralize_runs[session_id] = run
                 self.log(session_id, "info", run["message"])
-                thread = threading.Thread(target=self.run_viralize, args=(session_id, run, token, fields, skip_offer), daemon=True)
+                thread = threading.Thread(target=self.run_viralize, args=(session_id, run, token, fields, skip_offer, limit), daemon=True)
                 thread.start()
                 return {"ok": True}
         self.viralize_api(token).request("account/ensure", fields, write=True)
@@ -507,14 +510,14 @@ class RamosService:
         if not session.get("authenticated") or session.get("account_id") != run["account_id"]:
             raise ApiError("A conta da sessão mudou. Nenhuma ação adicional será enviada.", 409)
 
-    def run_viralize(self, session_id, run, token, fields, skip_offer):
+    def run_viralize(self, session_id, run, token, fields, skip_offer, max_tasks):
         def update(status, message, can_skip=False):
             self.viralize_update(session_id, run, status, message, can_skip)
 
         completed_count = 0
         try:
             api = self.viralize_api(token)
-            while completed_count < MAX_VIRALIZE_TASKS_PER_ROUND:
+            while completed_count < max_tasks:
                 with self.lock:
                     self.viralize_require_current(session_id, run)
                 update("running", "Consultando a fila do Viralize…" if completed_count == 0 else f"Tarefa {completed_count} concluída. Buscando a próxima…")
@@ -575,7 +578,7 @@ class RamosService:
                 update("running", "Ação confirmada pelo Instagram. Enviando para análise…")
                 api.request("task/confirm-analysis", {**fields, "completion_id": offer["completion_id"], "is_refill": offer["is_refill"]}, write=True)
                 completed_count += 1
-            update("done", f"Rodada encerrada após {MAX_VIRALIZE_TASKS_PER_ROUND} tarefas por segurança.")
+            update("done", f"Rodada encerrada após o limite escolhido de {max_tasks} tarefa(s).")
         except ApiError as error:
             update("stopped" if run["stop"] else "error", str(error))
         except Exception:
