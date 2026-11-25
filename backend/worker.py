@@ -69,15 +69,38 @@ ERRORS = {
 }
 
 
+@contextlib.contextmanager
+def web_input(core):
+    """Adaptar somente entrada/saída; o núcleo usa a mesma lógica do script CLI."""
+    overrides = {
+        "CONSOLE": EventConsole(),
+        "read_json": read_json,
+        "save_private_json": write_json,
+        "read_authenticator_code": lambda: ask_code("authenticator", "Digite os 6 dígitos do aplicativo autenticador e toque em Confirmar."),
+        "read_verification_code": lambda *_: ask_code(),
+    }
+    previous = {name: getattr(core, name) for name in overrides}
+    previous_getpass = core.getpass.getpass
+    try:
+        for name, value in overrides.items():
+            setattr(core, name, value)
+        # A continuação genérica do script lê getpass diretamente.
+        core.getpass.getpass = lambda *_args, **_kwargs: ask_code("two_factor", "Digite o código do autenticador/SMS ou o código de backup solicitado pelo Instagram.")
+        yield
+    finally:
+        core.getpass.getpass = previous_getpass
+        for name, value in previous.items():
+            setattr(core, name, value)
+
+
 def run(payload):
     import instagram_login_apk as core
 
-    core.CONSOLE = EventConsole()
-    core.read_json = read_json
-    core.save_private_json = write_json
-    core.read_authenticator_code = lambda: ask_code("authenticator", "Informe os 6 dígitos do aplicativo autenticador.")
-    core.read_two_factor_code = lambda: ask_code("two_factor", "Digite o código do autenticador/SMS ou o código de backup solicitado pelo Instagram.")
-    core.read_verification_code = lambda *_: ask_code()
+    with web_input(core):
+        _run(payload, core)
+
+
+def _run(payload, core):
     directory = Path(payload["directory"]).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     session_path = directory / "session.json"
@@ -93,7 +116,7 @@ def run(payload):
             client.set_settings(settings)
             client._local_login_username = settings.get("_local_login_username")
         client.challenge_code_handler = core.read_verification_code
-        client.two_factor_method = "auto"
+        client.two_factor_method = payload.get("two_factor_method", "autenticador")
         apply_instagram_proxy(client, payload.get("proxy", ""))
         handle = core.valid_username(payload["username"])
         owner = getattr(client, "_local_login_username", None)

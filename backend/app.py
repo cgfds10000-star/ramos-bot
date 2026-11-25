@@ -481,7 +481,7 @@ class RamosService:
             self.jobs[session_id] = job
             worker_payload = {"mode": mode, "username": account["username"], "password": password, "steps": steps,
                               "directory": str(self.directory / "accounts" / account["id"]), "proxy": self.data.get("proxy", ""),
-                              "two_factor_method": "autenticador"}
+                              "two_factor_method": self.data["settings"]["two_factor_method"]}
             try:
                 process = subprocess.Popen(self.worker_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                            text=True, encoding="utf-8", bufsize=1, cwd=ROOT / "backend",
@@ -1086,7 +1086,8 @@ class RamosHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             if urlsplit(self.path).path == "/api/health":
-                return self.reply(200, {"ok": True})
+                return self.reply(200, {"ok": True, "login_flow": "script-web-2fa-v2",
+                                        "revision": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "local")})
             path = urlsplit(self.path).path
             if path.startswith("/api/") or not os.environ.get("RAMOS_ADMIN_PASSWORD"):
                 self.access()
@@ -1115,6 +1116,8 @@ class RamosHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", mimetypes.guess_type(requested.name)[0] or "application/octet-stream")
             self.send_header("X-Content-Type-Options", "nosniff")
+            if requested.name == "index.html":
+                self.send_header("Cache-Control", "no-cache")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)

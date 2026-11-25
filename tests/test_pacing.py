@@ -61,7 +61,8 @@ class PacingChecks(unittest.TestCase):
         self.assertEqual([name for name, _ in timestamps],
                          ['task', 'task/accept', 'task/confirm-analysis'] * 2)
         for (_, before), (_, after) in zip(timestamps, timestamps[1:]):
-            self.assertGreaterEqual(after - before, .015)
+            # Tolerância de 1 ns para a subtração dos floats do relógio.
+            self.assertGreaterEqual(after - before + 1e-9, .015)
         self.assertEqual([call.args[1] for call in service.pacing_seconds.call_args_list],
                          ['api', 'execute', 'api', 'task', 'api', 'execute', 'api'])
         self.assertEqual(read_json(service.run_file)[sid]['speed'], 'calm')

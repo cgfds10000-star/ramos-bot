@@ -28,15 +28,14 @@ O JSON de --saida continua livre de formatacao e sequencias de cor.
 two_step_verification_context ou two_factor_info com TOTP habilitado.
 Se vier somente context_data de aprovacao, a troca ainda nao esta mapeada:
 o programa para com diagnostico e nao envia TOTP no contexto errado.
-Nesta versão web, o método padrão é autenticador; não há opção de aprovação por outro aparelho.
+O modo padrao, --2fa auto, preserva o fluxo de aprovacao anterior.
 
 Login CAA/Bloks e perfil Android mantidos pela biblioteca nao oficial
 instagrapi 3.2.19. O nucleo CAA e o mesmo que autenticou a conta; login e
 busca foram confirmados pelo usuario. Codigo e aprovacao continuam manuais.
 As acoes seguem as rotas REST analisadas no APK 458.0.0.0.45, validam o ID
 autenticado e conferem o estado antes de confirmar seguir/curtir.
-A continuacao accounts so e permitida uma vez quando o proprio CAA a solicita.
-Senhas e codigos nao sao repetidos em ciclos de login.
+Nao ha fallback para login legado nem repeticao automatica de escritas.
 Testes de regressao usam sessoes sinteticas e respostas simuladas.
 """
 from __future__ import annotations
@@ -57,7 +56,7 @@ import unicodedata
 from urllib.parse import urlsplit
 
 CLIENT_VERSION = "3.2.19"
-REVISION = "caa-4-acoes-5-totp-continuacao"
+REVISION = "caa-4-acoes-4-totp"
 
 
 # ---------------------------------------------------------------------------
@@ -554,13 +553,6 @@ def read_authenticator_code():
     return code
 
 
-def read_two_factor_code():
-    code = getpass.getpass("Digite o codigo do autenticador/SMS ou codigo de backup solicitado: ").strip()
-    if not code:
-        raise FlowError("Codigo nao informado.")
-    return code
-
-
 def authenticator_login(client, data):
     """Continuar a tentativa existente; nao reenviar senha nem repetir o codigo."""
     context = authenticator_context(client, data)
@@ -720,11 +712,10 @@ def load_client_class():
             self.device_approval_state = None
             self.device_approval_checks = 0
             self.profile_session_completed = False
-            self.two_factor_method = "autenticador"
+            self.two_factor_method = "auto"
             self.authenticator_in_progress = False
             self.authenticator_state = "nao_solicitado"
             self.authenticator_branch = None
-            self.caa_legacy_continuation_used = False
             super().__init__(*args, **kwargs)
 
         def private_request(self, endpoint, *args, **kwargs):
@@ -759,19 +750,7 @@ def load_client_class():
             return value
 
         def bloks_caa_login(self, *args, **kwargs):
-            if self.caa_legacy_continuation_used:
-                raise FlowError("O Instagram nao concluiu a continuacao do login. A senha nao foi reenviada em outra tentativa CAA.")
             outcome = super().bloks_caa_login(*args, **kwargs)
-            self.caa_last_outcome = outcome
-            # Uma resposta CAA pode conter o identificador TOTP nativo sem a
-            # referencia AP que aciona o resolvedor da biblioteca.
-            if not outcome.get("logged_in") and self.authenticator_state == "nao_solicitado":
-                data = {"resultado_caa": outcome, "resposta": self.last_json}
-                context = authenticator_context(self, data)
-                if ((self.two_factor_method == "autenticador" and context)
-                        or (not context and native_authenticator_info(data))):
-                    authenticator_login(self, data)
-                    self.profile_session_completed = True
             # A entrada de verificacao tambem pode devolver a sessao diretamente,
             # sem passar pela tela de codigo que a biblioteca espera.
             if self.profile_session_completed and self.user_id and (self.authorization or self.sessionid):
@@ -783,27 +762,51 @@ def load_client_class():
         def bloks_ap_two_step_verification_entrypoint(self, context_data, bloks_versioning_id="", domain=None):
             parent_entry = super().bloks_ap_two_step_verification_entrypoint
             result = parent_entry(context_data, bloks_versioning_id=bloks_versioning_id, domain=domain)
-            if self.bloks_apply_login_response(result) and self.user_id and (self.authorization or self.sessionid):
-                self.profile_session_completed = True
-                return result
-            if self.two_factor_method == "auto" and self.bloks_extract_context_data(result, PROFILE_CODE):
-                return result
             if self.two_factor_method == "autenticador":
+                if self.bloks_apply_login_response(result) and self.user_id and (self.authorization or self.sessionid):
+                    self.profile_session_completed = True
+                    return result
                 result = authenticator_login(self, result)
                 self.profile_session_completed = True
                 return result
-            raise FlowError("O Instagram exigiu uma verificação sem contexto TOTP disponível. A tentativa foi encerrada; nenhum código foi enviado.")
+            for attempt in range(4):
+                if self.bloks_apply_login_response(result) and self.user_id and (self.authorization or self.sessionid):
+                    self.profile_session_completed = True
+                    if self.device_approval_state:
+                        self.device_approval_state = "sessao_recebida"
+                    return result
+                if self.bloks_extract_context_data(result, PROFILE_CODE):
+                    if self.device_approval_state:
+                        self.device_approval_state = "tela_codigo_recebida"
+                    return result
+                if not requires_device_approval(result):
+                    if self.device_approval_state:
+                        self.device_approval_state = "outra_continuacao"
+                    return result
+                self.device_approval_state = "pendente"
+                if attempt == 3:
+                    self.caa_last_outcome = {"logged_in": False, "reason": "device approval pending"}
+                    raise FlowError("A aprovacao ainda nao foi confirmada pelo servidor. A tentativa foi interrompida.")
+                if attempt == 0:
+                    print("O Instagram pediu aprovacao em outro dispositivo.")
+                    print("Abra o aplicativo onde essa conta ja esta conectada e aprove a tentativa que voce acabou de iniciar.")
+                    print("Esta tentativa usa o perfil Android:", self.device_settings.get("model", "Android"))
+                else:
+                    print("O servidor ainda mostra a tela de aprovacao. Confirme o aviso no aplicativo antes de continuar.")
+                answer = input("Depois de aprovar, pressione Enter para consultar. Digite sair para encerrar: ").strip().casefold()
+                if answer in {"sair", "q", "cancelar"}:
+                    self.caa_last_outcome = {"logged_in": False, "reason": "device approval pending"}
+                    raise FlowError("Tentativa encerrada enquanto aguardava aprovacao.")
+                # Preferir um contexto literal atualizado, quando o servidor o
+                # fornecer. Nao criar tokens nem reenviar usuario e senha.
+                context_data = self.bloks_extract_context_data(result, PROFILE_ENTRY) or context_data
+                self.device_approval_checks += 1
+                result = parent_entry(context_data, bloks_versioning_id=bloks_versioning_id, domain=domain)
+            return result
 
         def login_legacy(self, *args, **kwargs):
-            # Respeitar a continuacao explicita do CAA; nao iniciar a rota
-            # accounts por tentativa nem repetir um codigo ja enviado.
-            markers = self._caa_result_action_markers(self.caa_last_outcome)
-            if (not self.caa_legacy_continuation_used
-                    and self.authenticator_state == "nao_solicitado"
-                    and any(marker.startswith("CAA_LOGIN_FALLBACK:") for marker in markers)):
-                self.caa_legacy_continuation_used = True
-                CONSOLE.info("Continuando a etapa de autenticacao solicitada pelo Instagram...")
-                return super().login_legacy(*args, **kwargs)
+            # Nesta conta o legado ja retornou needs_upgrade. Preservar a falha
+            # CAA original em vez de repetir o login e mascara-la com outro erro.
             reason = CAA_REASONS.get(self.caa_last_outcome.get("reason"), "continuacao_nao_reconhecida")
             raise FlowError("A verificacao CAA nao foi concluida: " + reason +
                             ". A rota antiga foi interrompida; veja o diagnostico.")
@@ -985,43 +988,36 @@ def safe_diagnostic(client, outcome, error=None):
         "metodo_2fa": getattr(client, "two_factor_method", "auto"),
         "ramo_autenticador": getattr(client, "authenticator_branch", None),
         "estado_autenticador": getattr(client, "authenticator_state", "nao_solicitado"),
-        "continuacao_accounts_solicitada": getattr(client, "caa_legacy_continuation_used", False),
         "etapas": trace[-100:],
     }
 
 
 def continue_two_factor(client, error):
-    if getattr(client, "authenticator_state", "nao_solicitado") != "nao_solicitado":
-        raise FlowError("A tentativa do autenticador foi interrompida pelo servidor. Nenhum codigo ou etapa foi repetido.")
-    data = {"resposta": client.last_json, "resultado_caa": client.caa_last_outcome}
-    context = getattr(error, "two_step_verification_context", "")
-    if isinstance(context, str) and context:
-        data["two_step_verification_context"] = context
-    info = getattr(error, "two_factor_info", None)
-    if isinstance(info, dict):
-        data["two_factor_info"] = info
     if getattr(client, "two_factor_method", "auto") == "autenticador":
+        if getattr(client, "authenticator_state", "nao_solicitado") != "nao_solicitado":
+            raise FlowError("A tentativa do autenticador foi interrompida pelo servidor. Nenhum codigo ou etapa foi repetido.")
+        data = {"resposta": client.last_json, "resultado_caa": client.caa_last_outcome}
+        context = getattr(error, "two_step_verification_context", "")
+        if isinstance(context, str) and context:
+            data["two_step_verification_context"] = context
+        info = getattr(error, "two_factor_info", None)
+        if isinstance(info, dict):
+            data["two_factor_info"] = info
         authenticator_login(client, data)
         return bool(client.user_id and (client.authorization or client.sessionid))
-    context = authenticator_context(client, data)
+    # Continuar o contexto recebido, sem repetir o envio de usuario e senha.
+    context = getattr(error, "two_step_verification_context", "")
+    data = dict(client.last_json) if isinstance(client.last_json, dict) else {}
+    if context:
+        data["two_step_verification_context"] = context
+    context = client._extract_two_step_verification_context(data)
     if not context:
-        if native_authenticator_info(data):
-            authenticator_login(client, data)
-            return bool(client.user_id and (client.authorization or client.sessionid))
         raise FlowError("O servidor pediu dois fatores, mas nao devolveu um contexto utilizavel. Conclua no aplicativo.")
     data["two_step_verification_context"] = context
-    client.authenticator_state = "aguardando_codigo"
-    code = None
-    try:
-        code = read_two_factor_code()
-        client.authenticator_state = "codigo_enviado"
-        accepted = client._login_with_bloks_two_factor(code, data, error)
-        if not accepted or not client.user_id or not (client.authorization or client.sessionid):
-            raise FlowError("A resposta do 2FA nao confirmou uma sessao autenticada. O codigo nao foi repetido.")
-        client.authenticator_state = "autenticado"
-        return True
-    finally:
-        code = None
+    code = getpass.getpass("Digite o codigo do autenticador/SMS ou codigo de backup solicitado: ").strip()
+    if not code:
+        raise FlowError("Codigo nao informado.")
+    return client._login_with_bloks_two_factor(code, data, error)
 
 
 def show_failure(diagnostic):
@@ -1421,7 +1417,7 @@ def build_parser():
     terminal.add_argument("--plano", action="store_true", help="Mostrar o fluxo, sem rede nem gravacao de arquivos.")
     terminal.add_argument("-h", "--help", action="help", help="Mostrar esta ajuda e sair.")
     account.add_argument("--timeout", type=float, default=30, help="Tempo limite das requisicoes em segundos.")
-    account.add_argument("--2fa", dest="two_factor_method", choices=["autenticador"], default="autenticador",
+    account.add_argument("--2fa", dest="two_factor_method", choices=["auto", "autenticador"], default="auto",
                          help="Em login, escolher o app de autenticacao quando houver contexto 2FA valido.")
     return parser
 
@@ -1437,6 +1433,8 @@ def main(argv=None):
         else:
             show_flow()
         return 0
+    if args.two_factor_method != "auto" and args.comando != "login":
+        raise FlowError("Use --2fa autenticador somente com o comando login.")
     if args.timeout <= 0:
         raise FlowError("O timeout precisa ser positivo.")
     credentials = args.credenciais or Path(__file__).resolve().with_name("login.txt")

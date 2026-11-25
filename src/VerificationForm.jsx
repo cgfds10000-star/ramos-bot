@@ -9,13 +9,15 @@ export default function VerificationForm({api, sessionId, challenge, pending, on
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
   const [preview, setPreview] = useState(null);
+  const [entryMode, setEntryMode] = useState('code');
   const active = useRef(true);
   const inFlight = useRef(false);
   const autoAttempted = useRef(false);
   const controller = useRef(null);
   const afterSend = useRef(onSubmitted);
   afterSend.current = onSubmitted;
-  const kind = verificationInputKind(value, challenge.kind);
+  const detectedKind = verificationInputKind(value, challenge.kind);
+  const kind = detectedKind === entryMode ? detectedKind : null;
   const acceptsSecret = acceptsAuthenticatorSecret(challenge.kind);
 
   useEffect(() => { active.current = true; return () => { active.current = false; controller.current?.abort(); }; }, []);
@@ -75,10 +77,8 @@ export default function VerificationForm({api, sessionId, challenge, pending, on
 
   return <form className="verification" onSubmit={event => { event.preventDefault(); if (!pending && online && kind) submit(); }}>
     <ShieldCheck size={21}/><div><strong>Verificação em duas etapas</strong>
-      <p>{acceptsSecret ? (challenge.kind === 'two_factor'
-        ? 'Cole sua chave secreta para gerar o código de 6 dígitos, ou digite o código do autenticador/SMS ou de backup.'
-        : 'Digite o código de 6 dígitos ou cole sua chave secreta Base32, com ou sem espaços.') : challenge.message}</p>
-      <div className="verification-row"><input autoFocus type={acceptsSecret ? 'password' : 'text'} autoComplete="one-time-code" inputMode={acceptsSecret ? 'text' : 'numeric'} autoCapitalize="characters" spellCheck={false} maxLength={256} aria-label={acceptsSecret ? 'Código 2FA ou chave Base32' : 'Código de verificação'} placeholder={acceptsSecret ? 'Chave secreta ou código 2FA' : '000000'} value={value} onChange={event => { setValue(event.target.value); setError(''); }} disabled={sending || sent} required/>
+      <p>{entryMode === 'secret' ? 'Cole sua chave secreta Base32, com ou sem espaços, para gerar o código de 6 dígitos.' : challenge.message}</p>
+      <div className="verification-row"><input autoFocus type={entryMode === 'secret' ? 'password' : 'text'} autoComplete={entryMode === 'secret' ? 'off' : 'one-time-code'} inputMode={entryMode === 'secret' ? 'text' : 'numeric'} autoCapitalize={entryMode === 'secret' ? 'characters' : 'none'} spellCheck={false} maxLength={entryMode === 'secret' ? 256 : challenge.kind === 'authenticator' ? 6 : 8} aria-label={entryMode === 'secret' ? 'Chave secreta Base32' : 'Código de verificação'} placeholder={entryMode === 'secret' ? 'Chave secreta Base32' : '000000'} value={value} onChange={event => { setValue(event.target.value); setError(''); }} disabled={sending || sent} required/>
         <button className="small-button" disabled={pending || sending || sent || !online || !kind}>{sending ? <LoaderCircle className="spin" size={17}/> : 'Confirmar'}</button>
       </div>
       {preview && kind === 'secret' && !sending && !sent && <div className="verification-totp">
@@ -86,7 +86,8 @@ export default function VerificationForm({api, sessionId, challenge, pending, on
         <output aria-label="Código 2FA gerado">{preview.code}</output>
         <span className="verification-totp-validity">Ativo · {preview.remaining}s</span>
       </div>}
-      <p className="verification-hint" aria-live="polite">{sent ? 'Código enviado. Aguardando o Instagram…' : sending ? 'Preparando e enviando o código 2FA…' : acceptsSecret ? 'A chave é convertida aqui no navegador. Somente o código gerado é enviado automaticamente ao Instagram.' : 'Use o código recebido pelo método solicitado.'}</p>
+      <p className="verification-hint" aria-live="polite">{sent ? 'Código enviado. Aguardando o Instagram…' : sending ? 'Preparando e enviando o código 2FA…' : entryMode === 'secret' ? 'A chave é convertida aqui no navegador. Somente o código gerado é enviado automaticamente ao Instagram.' : 'Digite o código solicitado e toque em Confirmar.'}</p>
+      {acceptsSecret && <button type="button" className="text-button" disabled={sending || sent} onClick={() => { setEntryMode(mode => mode === 'code' ? 'secret' : 'code'); setValue(''); setError(''); setPreview(null); }}>{entryMode === 'secret' ? 'Digitar código' : 'Usar chave secreta'}</button>}
       {error && <div className="error-banner" role="alert">{error}</div>}
     </div>
   </form>;
