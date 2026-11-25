@@ -110,3 +110,71 @@ body{background:radial-gradient(ellipse at 50% 58%,#1d06432b,transparent 72%),#0
     padding-top: calc(86px + env(safe-area-inset-top)) !important;
   }
 }
+
+/* Layout mobile final: navegação fixa embaixo; a lista é a área rolável. */
+@media (max-width: 599px) {
+  html,
+  body,
+  #root {
+    height: 100%;
+    min-height: 100%;
+    overflow: hidden;
+  }
+
+  .app-shell,
+  .app-shell.is-macros {
+    width: 100%;
+    height: 100dvh;
+    min-height: 0;
+    max-height: 100dvh;
+    overflow: hidden;
+    padding-top: 20px !important;
+    padding-bottom: calc(92px + env(safe-area-inset-bottom)) !important;
+  }
+
+  .bottom-nav,
+  .is-macros .bottom-nav {
+    position: fixed !important;
+    z-index: 1000 !important;
+    top: auto !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    transform: none !important;
+    border-top: 1px solid #6b278e !important;
+    border-left: 0 !important;
+    border-right: 0 !important;
+    border-bottom: 0 !important;
+    border-radius: 0 !important;
+    padding: 5px 8px calc(5px + env(safe-area-inset-bottom)) !important;
+  }
+
+  .sessions-home {
+    height: clamp(240px, calc(100dvh - 470px), 560px);
+    max-height: none;
+    min-height: 240px;
+  }
+
+  .sessions-home .sessions-heading,
+  .sessions-home .session-search,
+  .sessions-home .session-illustration {
+    flex: 0 0 auto;
+  }
+
+  .sessions-home .session-list {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .is-macros .macro-run-list {
+    max-height: 32dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+}
