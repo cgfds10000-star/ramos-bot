@@ -32,6 +32,48 @@ BUSY = {"connecting", "running", "awaiting_input"}
 MAX_VIRALIZE_TASKS_PER_ROUND = 500
 
 
+def safe_login_summary(data):
+    """Resumo para logs privados de operação; nunca copiar respostas ou credenciais."""
+    if not isinstance(data, dict):
+        return {}
+    summary = {}
+    for key in ('revisao', 'versao_biblioteca', 'app_version', 'version_code', 'excecao', 'erro', 'motivo_caa', 'estado_autenticador', 'ramo_autenticador'):
+        value = data.get(key)
+        if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', value):
+            if re.search(r'(?i)(token|password|sessionid|authorization|ghp_|vzs_|rlwy_)', value):
+                value = 'oculto'
+            summary[key] = value
+    if type(data.get('http')) is int and 100 <= data['http'] <= 599:
+        summary['http'] = data['http']
+    for key in ('sessao_recebida', 'caa_iniciado', 'continuacao_accounts_solicitada'):
+        if type(data.get(key)) is bool:
+            summary[key] = data[key]
+    frames = data.get('origem_erro')
+    if isinstance(frames, list):
+        summary['origem_erro'] = [{key: value for key, value in frame.items() if (key in {'arquivo', 'funcao'} and isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.]{1,80}', value)) or (key == 'linha' and type(value) is int and 0 < value < 100000)} for frame in frames[-6:] if isinstance(frame, dict)]
+    steps = data.get('etapas')
+    if isinstance(steps, list):
+        summary['etapas'] = [{key: value for key, value in step.items() if (key == 'etapa' and isinstance(value, str) and re.fullmatch(r'[a-z0-9_]{1,60}', value)) or (key == 'http' and type(value) is int and 100 <= value <= 599)} for step in steps[-12:] if isinstance(step, dict)]
+    return summary
+
+
+def log_login_diagnostic(data, source):
+    print(json.dumps({'event': 'ramos_login_diagnostic', 'source': source, **safe_login_summary(data)}, ensure_ascii=False), flush=True)
+
+
+def log_saved_login_diagnostics(directory):
+    try:
+        paths = sorted(directory.glob('accounts/*/diagnostic.json'), key=lambda path: path.stat().st_mtime, reverse=True)[:5]
+    except OSError:
+        return
+    for path in paths:
+        try:
+            log_login_diagnostic(storage_read(path), 'stored')
+        except Exception:
+            # Diagnóstico ausente, inválido ou ilegível não impede a inicialização.
+            continue
+
+
 class ApiError(Exception):
     def __init__(self, message, status=400):
         super().__init__(message)
@@ -378,6 +420,8 @@ class RamosService:
                     kind = event.get("type")
                     if kind == "log":
                         self.log(session_id, event.get("tone"), event.get("message", ""), job["hidden"])
+                    elif kind == 'diagnostic':
+                        log_login_diagnostic(event.get('data'), 'worker')
                     elif kind == "input_required":
                         session["status"] = "awaiting_input"
                         session["challenge"] = {"id": str(uuid.uuid4()), "kind": event.get("kind", "code"), "message": str(event.get("message", "Informe o código solicitado."))[:300]}
@@ -873,6 +917,7 @@ def main():
     if os.environ.get("RAMOS_HOST", "127.0.0.1") not in {"127.0.0.1", "localhost", "::1"} and not (os.environ.get("RAMOS_API_KEY") or os.environ.get("RAMOS_ADMIN_PASSWORD")):
         raise RuntimeError("Configure RAMOS_ADMIN_PASSWORD para expor o painel com autenticação.")
     service = RamosService()
+    log_saved_login_diagnostics(service.directory)
     server = make_server(service, args.port)
     print(f"Ramos Bot: http://127.0.0.1:{server.server_address[1]}", flush=True)
     try:
