@@ -1,11 +1,13 @@
 import {executionActive} from './api.js';
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, Eye, EyeOff, Info, KeyRound, Layers3, Minus, Monitor, Play, Plus, RefreshCw, Square } from 'lucide-react';
+import { Check, ChevronDown, Clock3, Eye, EyeOff, Info, KeyRound, Layers3, Minus, Monitor, Play, Plus, RefreshCw, Square } from 'lucide-react';
 
 const VIRALIZE_KEY_STORAGE = 'ramos.viralize.apiKey';
 const VIRALIZE_KEY_PATTERN = /^vzs_[A-Za-z0-9_-]{1,480}$/;
+const SPEED_STORAGE = 'ramos.viralize.speed';
+const DEFAULT_PROFILES = {moderate: {label: 'Moderado'}, calm: {label: 'Pausado'}, slow: {label: 'Lento'}};
 
-export default function MacrosPage({ sessions, api, refresh, status, online, selectedIds, onSelectionChange }) {
+export default function MacrosPage({ sessions, api, refresh, status, online, selectedIds, onSelectionChange, pacingProfiles }) {
   const [apiKey, setApiKey] = useState(() => {
     try { return localStorage.getItem(VIRALIZE_KEY_STORAGE) || ''; }
     catch { return ''; }
@@ -14,6 +16,11 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
   const [linkedIds, setLinkedIds] = useState([]);
   const [taskType, setTaskType] = useState('follow');
   const [taskLimit, setTaskLimit] = useState('50');
+  const [speed, setSpeed] = useState(() => {
+    try { const value = localStorage.getItem(SPEED_STORAGE); return Object.hasOwn(DEFAULT_PROFILES, value) ? value : 'moderate'; }
+    catch { return 'moderate'; }
+  });
+  const [now, setNow] = useState(() => api.serverNow());
   const [busy, setBusy] = useState(false);
   const [messages, setMessages] = useState({});
   const allCheckbox = useRef(null);
@@ -22,6 +29,8 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
   const allSelected = sessions.length > 0 && selected.length === sessions.length;
   const someSelected = selected.length > 0 && !allSelected;
   const running = Object.values(status).some(executionActive);
+  const profiles = pacingProfiles || DEFAULT_PROFILES;
+  const profile = profiles[speed];
   const validKey = VIRALIZE_KEY_PATTERN.test(apiKey.trim());
   const numericLimit = Number(taskLimit);
   const validLimit = Number.isInteger(numericLimit) && numericLimit >= 1 && numericLimit <= 500;
@@ -31,6 +40,17 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
   useEffect(() => {
     if (allCheckbox.current) allCheckbox.current.indeterminate = someSelected;
   }, [someSelected]);
+
+  useEffect(() => {
+    try { localStorage.setItem(SPEED_STORAGE, speed); } catch { /* armazenamento opcional */ }
+  }, [speed]);
+
+  useEffect(() => {
+    if (!running) return;
+    setNow(api.serverNow());
+    const timer = setInterval(() => setNow(api.serverNow()), 1000);
+    return () => clearInterval(timer);
+  }, [running, api]);
 
   useEffect(() => {
     const activeIds = new Set(sessions.filter(session => session.authenticated).map(session => session.id));
@@ -59,7 +79,7 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
         try {
           const ids = items.map(session => session.id);
           setMessages(previous => ({...previous, ...Object.fromEntries(ids.map(id => [id, 'Iniciando no servidor…']))}));
-          await api.post('/viralize/start', {session_ids: ids, token: apiKey.trim(), type: taskType, limit: numericLimit});
+          await api.post('/viralize/start', {session_ids: ids, token: apiKey.trim(), type: taskType, limit: numericLimit, speed});
           setMessages(previous => ({...previous, ...Object.fromEntries(ids.map(id => [id, '']))}));
         } catch (error) {
           setMessages(previous => ({...previous, ...Object.fromEntries(items.map(session => [session.id, error.message || 'Não foi possível iniciar no servidor.']))}));
@@ -70,7 +90,7 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
         try {
           const path = `/sessions/${session.id}/${action === 'stop' ? 'stop' : `viralize/${action}`}`;
           setMessages(previous => ({ ...previous, [session.id]: action === 'link' ? 'Vinculando conta…' : action === 'start' ? 'Iniciando rodada…' : action === 'skip' ? 'Pulando tarefa…' : 'Interrompendo…' }));
-          const body = action === 'stop' ? {} : { token: apiKey.trim(), type: taskType, ...(action === 'start' ? { limit: numericLimit } : {}) };
+          const body = action === 'stop' ? {} : { token: apiKey.trim(), type: taskType, speed, ...(action === 'start' ? { limit: numericLimit } : {}) };
           await api.post(path, body);
           if (action === 'link') setLinkedIds(ids => [...new Set([...ids, session.id])]);
           setMessages(previous => ({ ...previous, [session.id]: action === 'link' ? 'Conta vinculada no Viralize.' : '' }));
@@ -141,7 +161,7 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
       <div className="macro-execution-state">
         <h2 id="macro-execution-title">Execução</h2>
         <p className="macro-execution-subtitle">Configurar e iniciar a execução das tarefas</p>
-        <span className={`macro-stopped ${running ? 'is-running' : ''}`}><Square aria-hidden="true" fill="currentColor"/>{running ? Object.values(status).some(run => run.status === 'running') ? 'Em andamento' : Object.values(status).some(run => run.status === 'recovering') ? 'Restaurando' : 'Aguardando tarefas' : 'Parada'}</span>
+        <span className={`macro-stopped ${running ? 'is-running' : ''}`}><Square aria-hidden="true" fill="currentColor"/>{running ? Object.values(status).some(run => run.status === 'running') ? 'Em andamento' : Object.values(status).some(run => run.status === 'recovering') ? 'Restaurando' : Object.values(status).some(run => run.status === 'waiting' && (run.phase?.startsWith('pace_') || run.phase === 'between_rounds')) ? 'Em intervalo' : 'Aguardando tarefas' : 'Parada'}</span>
       </div>
       <label className="macro-task-type">
         <span className="macro-control-caption"><Layers3 aria-hidden="true"/><span>Tipo de tarefa</span></span>
@@ -155,15 +175,27 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
         <span className="macro-control-caption"><RefreshCw aria-hidden="true"/><span>Limite da rodada</span></span>
         <input type="number" min="1" max="500" step="1" inputMode="numeric" value={taskLimit} onChange={event => setTaskLimit(event.target.value)} disabled={busy || running} aria-describedby="macro-limit-help"/>
       </label>
+      <div className="macro-speed-control">
+        <label className="macro-speed">
+          <span className="macro-control-caption"><Clock3 aria-hidden="true"/><span>Ritmo das ações</span></span>
+          <span className="macro-select-wrap"><select value={speed} onChange={event => setSpeed(event.target.value)} disabled={busy || running} aria-describedby="macro-speed-help">
+            {Object.entries(profiles).map(([value, item]) => <option key={value} value={value}>{item.label}</option>)}
+          </select><ChevronDown aria-hidden="true"/></span>
+        </label>
+        <p id="macro-speed-help" className="macro-flow-note">Pausas variáveis ao aceitar, executar e confirmar.{profile?.task && <> Intervalo de {profile.task[0]}–{profile.task[1]} s entre tarefas e {profile.round[0]}–{profile.round[1]} s entre rodadas.</>}</p>
+      </div>
       <button type="button" className="macro-start-button" disabled={!canStart} onClick={() => send('start', selected)}><Play aria-hidden="true"/>Iniciar</button>
       <div id="macro-limit-help" className="macro-execution-note"><Info aria-hidden="true"/><p>Defina o limite de cada rodada. No modo contínuo, o servidor aguarda novas tarefas e inicia a próxima rodada automaticamente. Você pode interromper a execução a qualquer momento.</p></div>
       <ul className="macro-run-list" aria-live="polite">
         {sessions.filter(session => status[session.id] || messages[session.id]).map(session => {
           const run = status[session.id];
-          const stateLabel = run?.status === 'waiting' ? 'Aguardando tarefas' : run?.status === 'recovering' ? 'Restaurando' : run?.status === 'running' ? 'Em execução' : run?.status === 'done' ? 'Concluído' : run?.status === 'empty' ? 'Fila vazia' : run?.status === 'attention' ? 'Atenção' : run?.status === 'error' ? 'Erro' : '';
+          const paced = run?.phase?.startsWith('pace_') || run?.phase === 'between_rounds';
+          const stateLabel = run?.status === 'waiting' ? paced ? 'Em intervalo' : 'Aguardando tarefas' : run?.status === 'recovering' ? 'Restaurando' : run?.status === 'running' ? 'Em execução' : run?.status === 'done' ? 'Concluído' : run?.status === 'empty' ? 'Fila vazia' : run?.status === 'attention' ? 'Atenção' : run?.status === 'error' ? 'Erro' : '';
+          const remaining = Math.max(0, Math.ceil(((run?.next_check_at || 0) * 1000 - now) / 1000));
           return <li key={session.id}>
             <div className="macro-run-heading"><strong>{session.name}</strong>{stateLabel && <span className={`macro-run-status is-${run.status}`}>{stateLabel}</span>}</div>
             <p>{messages[session.id] || run?.message}</p>{run && <p>{run.completed_total || 0} tarefas enviadas para análise · Rodada {run.round || 1} · Execução no servidor</p>}
+            {executionActive(run) && run.next_check_at && <p className="macro-countdown"><Clock3 size={16} aria-hidden="true"/>{remaining > 0 ? `Próxima etapa em ${remaining} s` : 'Retomando…'} · {profiles[run.speed]?.label || 'Moderado'}</p>}
             {executionActive(run) && <button type="button" className="text-button" disabled={busy || !online} onClick={() => send('stop', [session])}>Interromper</button>}
             {run?.can_skip && <button type="button" className="text-button" disabled={busy || !online || !validKey || !session.authenticated || !linkedIds.includes(session.id)} onClick={() => send('skip', [session])}>Pular tarefa</button>}
           </li>;

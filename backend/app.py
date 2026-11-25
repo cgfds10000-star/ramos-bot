@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import random
 import secrets
 import signal
 import subprocess
@@ -33,7 +34,21 @@ COMMANDS = {"buscar", "perfil", "seguir", "curtir"}
 BUSY = {"connecting", "running", "awaiting_input"}
 MAX_VIRALIZE_TASKS_PER_ROUND = 500
 ACTIVE_RUNS = {'running', 'waiting', 'recovering'}
-SAFE_RESUME_PHASES = {'polling', 'waiting', 'between_rounds', 'recovering_session'}
+SAFE_RESUME_PHASES = {'polling', 'waiting', 'between_rounds', 'recovering_session',
+                      'pace_accept', 'pace_execute', 'pace_next'}
+PACING_PROFILES = {
+    'moderate': {'label': 'Moderado', 'api': (2, 4), 'execute': (4, 8), 'task': (30, 60), 'round': (60, 120)},
+    'calm': {'label': 'Pausado', 'api': (3, 6), 'execute': (6, 12), 'task': (60, 90), 'round': (120, 180)},
+    'slow': {'label': 'Lento', 'api': (4, 8), 'execute': (8, 15), 'task': (90, 150), 'round': (180, 300)},
+}
+DEFAULT_PACING = 'moderate'
+
+
+def pacing_profile(body):
+    speed = body.get('speed', DEFAULT_PACING)
+    if not isinstance(speed, str) or speed not in PACING_PROFILES:
+        raise ApiError('Selecione um ritmo de execução válido.')
+    return speed
 
 
 class ApiError(Exception):
@@ -257,6 +272,7 @@ class RamosService:
             if not isinstance(plan, dict) or not any(item['id'] == session_id for item in self.data['sessions']):
                 continue
             run = {key: plan.get(key) for key in ('account_id', 'type', 'limit', 'continuous', 'phase', 'completed_count', 'completed_total', 'round', 'next_check_at', 'offer', 'can_skip')}
+            run['speed'] = plan.get('speed') if plan.get('speed') in PACING_PROFILES else DEFAULT_PACING
             run.update(status='recovering' if plan.get('desired') else plan.get('status', 'stopped'),
                        message='Restaurando execução salva no servidor…' if plan.get('desired') else plan.get('message', 'Execução encerrada.'),
                        stop=False, stop_event=threading.Event())
@@ -275,7 +291,7 @@ class RamosService:
         if self.shutting_down or self.viralize_runs.get(session_id) is not run:
             return
         plan = self.saved_runs.setdefault(session_id, {})
-        for key in ('account_id', 'type', 'limit', 'continuous', 'phase', 'completed_count', 'completed_total', 'round', 'next_check_at', 'offer', 'can_skip', 'status', 'message'):
+        for key in ('account_id', 'type', 'limit', 'continuous', 'phase', 'completed_count', 'completed_total', 'round', 'next_check_at', 'offer', 'can_skip', 'status', 'message', 'speed'):
             if key in run:
                 plan[key] = run[key]
         plan['desired'] = run['status'] in ACTIVE_RUNS and not run['stop']
@@ -403,8 +419,10 @@ class RamosService:
             data["viralize"] = {session_id: {
                 "status": run["status"], "message": run["message"], "can_skip": run["can_skip"],
                 'completed_total': run.get('completed_total', 0), 'round': run.get('round', 1),
-                'continuous': bool(run.get('continuous')), 'next_check_at': run.get('next_check_at')
+                'continuous': bool(run.get('continuous')), 'next_check_at': run.get('next_check_at'),
+                'speed': run.get('speed', DEFAULT_PACING), 'phase': run.get('phase')
             } for session_id, run in self.viralize_runs.items()}
+            data['viralize_pacing'] = PACING_PROFILES
             for account in data["accounts"]:
                 account["has_session"] = (self.directory / "accounts" / account["id"] / "session.json").is_file()
             parsed = urlsplit(data.pop("proxy", ""))
@@ -597,6 +615,7 @@ class RamosService:
         limit = body.get("limit", 50)
         if type(limit) is not int or not 1 <= limit <= MAX_VIRALIZE_TASKS_PER_ROUND:
             raise ApiError(f"O limite da rodada precisa estar entre 1 e {MAX_VIRALIZE_TASKS_PER_ROUND}.")
+        speed = pacing_profile(body)
         with self.lock:
             session = self.session(session_id)
             if not session.get("authenticated"):
@@ -619,7 +638,8 @@ class RamosService:
                        "message": "Consultando a fila do Viralize…", "can_skip": False, "offer": None,
                        'stop_event': threading.Event(), 'phase': 'polling', 'limit': limit,
                        'continuous': action == 'start' and self.data['settings']['continuous_execution'],
-                       'completed_count': 0, 'completed_total': 0, 'round': 1, 'next_check_at': None}
+                       'completed_count': 0, 'completed_total': 0, 'round': 1, 'next_check_at': None,
+                       'speed': speed}
                 self.viralize_runs[session_id] = run
                 self.checkpoint_run(session_id, run, token)
                 self.log(session_id, "info", run["message"])
@@ -650,6 +670,7 @@ class RamosService:
             raise ApiError(f'O limite da rodada precisa estar entre 1 e {MAX_VIRALIZE_TASKS_PER_ROUND}.')
         if body.get('type', 'follow') not in ('follow', 'like', 'follow,like'):
             raise ApiError('Selecione tarefas de seguir ou curtir.')
+        pacing_profile(body)
         with self.lock:
             accounts = set()
             for session_id in ids:
@@ -699,28 +720,42 @@ class RamosService:
         if not session.get("authenticated") or session.get("account_id") != run["account_id"]:
             raise ApiError("A conta da sessão mudou. Nenhuma ação adicional será enviada.", 409)
 
+    def pacing_seconds(self, run, stage):
+        return random.uniform(*PACING_PROFILES[run.get('speed', DEFAULT_PACING)][stage])
+
+    def wait_viralize(self, session_id, run, seconds, message, phase):
+        with self.lock:
+            self.viralize_require_current(session_id, run)
+            run['next_check_at'] = time.time() + seconds
+            self.viralize_update(session_id, run, 'waiting', message, phase=phase)
+        self.wait_viralize_deadline(session_id, run)
+
+    def wait_viralize_deadline(self, session_id, run):
+        # Event.wait permite interromper qualquer pausa sem esperar seu término.
+        remaining = max(0, (run.get('next_check_at') or 0) - time.time())
+        run['stop_event'].wait(remaining)
+        with self.lock:
+            self.viralize_require_current(session_id, run)
+            run['next_check_at'] = None
+
     def run_viralize(self, session_id, run, token, fields, skip_offer, max_tasks):
         def update(status, message, can_skip=False, phase=None):
             self.viralize_update(session_id, run, status, message, can_skip, phase)
 
-        def wait_for_queue(message, phase='waiting'):
-            with self.lock:
-                self.viralize_require_current(session_id, run)
-                run['next_check_at'] = time.time() + self.queue_poll_seconds
-                update('waiting', message, phase=phase)
-            run['stop_event'].wait(self.queue_poll_seconds)
-            with self.lock:
-                self.viralize_require_current(session_id, run)
-                run['next_check_at'] = None
+        def wait_for_queue(message, phase='waiting', seconds=None):
+            self.wait_viralize(session_id, run, self.queue_poll_seconds if seconds is None else seconds, message, phase)
+
+        def pace(stage, message, phase):
+            seconds = self.pacing_seconds(run, stage)
+            wait_for_queue(f'{message} Pausa de {seconds:.0f} s.', phase, seconds)
 
         completed_count = run.get('completed_count', 0)
         api = None
         try:
             api = self.new_viralize_client(token)
-            remaining_wait = max(0, (run.get('next_check_at') or 0) - time.time())
-            if remaining_wait:
-                update('waiting', 'Aguardando a próxima consulta no servidor…', phase='waiting')
-                run['stop_event'].wait(remaining_wait)
+            if run.get('next_check_at'):
+                update('waiting', 'Retomando o intervalo salvo no servidor…')
+                self.wait_viralize_deadline(session_id, run)
             while True:
                 with self.lock:
                     self.viralize_require_current(session_id, run)
@@ -731,7 +766,7 @@ class RamosService:
                     completed_count = 0
                     run['completed_count'] = 0
                     run['round'] += 1
-                    wait_for_queue('Rodada concluída. O servidor aguardará antes de iniciar a próxima.', 'between_rounds')
+                    pace('round', 'Rodada concluída. Aguardando a próxima rodada.', 'between_rounds')
                 update("running", "Consultando a fila do Viralize…" if completed_count == 0 else f"Tarefa {completed_count} concluída. Buscando a próxima…", phase='polling')
                 queue = api.request("task", {**fields, "type": run["type"]})
                 with self.lock:
@@ -767,11 +802,13 @@ class RamosService:
                     if not self.dependency_check():
                         raise ApiError("O módulo Python do Instagram ainda não está instalado.", 503)
                 if offer["state"] == "available":
+                    pace('api', 'Tarefa encontrada. Aguardando antes de aceitar.', 'pace_accept')
                     update("running", "Aceitando a tarefa no Viralize…", phase='accepting')
                     accepted = api.request("task/accept", {**fields, "task_id": offer["task_id"], "is_refill": offer["is_refill"]}, write=True)
                     completion = accepted.get("completion")
                     completion_id = viralize_id(accepted.get("completion_id") or (completion.get("id") if isinstance(completion, dict) else None))
                     offer.update(state="active", completion_id=completion_id, completion_state="pending")
+                pace('execute', 'Tarefa aceita. Aguardando antes de executar.', 'pace_execute')
                 with self.lock:
                     self.viralize_require_current(session_id, run)
                     key = f'{offer["task_id"]}:{offer["completion_id"]}:{int(offer["is_refill"])}'
@@ -794,13 +831,24 @@ class RamosService:
                 if not job["success"] or (job["result"] or {}).get("estado") != expected:
                     update("attention", "A ação não foi confirmada como executada. Nada foi enviado para análise.", True)
                     return
+                # O Instagram já executou a ação: esta fase não admite retomada automática.
+                pace('api', 'Ação executada. Aguardando antes de confirmar.', 'pace_confirm')
                 update("running", "Ação confirmada pelo Instagram. Enviando para análise…", phase='confirming')
                 api.request("task/confirm-analysis", {**fields, "completion_id": offer["completion_id"], "is_refill": offer["is_refill"]}, write=True)
                 completed_count += 1
                 with self.lock:
                     run['completed_count'] = completed_count
                     run['completed_total'] = run.get('completed_total', 0) + 1
-                    update('running', f'{run["completed_total"]} tarefa(s) enviada(s) para análise pelo servidor.', phase='polling')
+                    # Persiste o prazo junto ao resultado, antes de liberar a próxima tarefa.
+                    needs_wait = completed_count < max_tasks
+                    if needs_wait:
+                        seconds = self.pacing_seconds(run, 'task')
+                        run['next_check_at'] = time.time() + seconds
+                    update('waiting' if needs_wait else 'running',
+                           f'{run["completed_total"]} tarefa(s) enviada(s) para análise.' + (f' Intervalo de {seconds:.0f} s antes da próxima tarefa.' if needs_wait else ''),
+                           phase='pace_next' if needs_wait else 'polling')
+                if needs_wait:
+                    self.wait_viralize_deadline(session_id, run)
         except ApiError as error:
             update("stopped" if run["stop"] else "error", str(error))
         except Exception:

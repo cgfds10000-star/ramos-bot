@@ -27,13 +27,29 @@ O núcleo usa o `instagram_login_apk.py` fornecido, com `instagrapi==3.2.19`. Um
 ## Fila do Viralize em Macros
 
 1. Conecte suas contas do Instagram em **Sessões**. Abra **Macros**, informe o token do Viralize (`vzs_…`), selecione as sessões conectadas e clique em **Aplicar plugin**.
-2. Escolha **Seguir perfis**, **Curtir publicações** ou **Seguir e curtir**, e clique em **Iniciar**. Cada sessão recebe no máximo uma tarefa na rodada. Se já houver uma ação pendente, ela é retomada em vez de aceitar outra oferta. Fila vazia encerra a rodada.
+2. Escolha **Seguir perfis**, **Curtir publicações** ou **Seguir e curtir**, o limite da rodada e o **Ritmo das ações**, e clique em **Iniciar**. Cada sessão processa uma tarefa por vez, até o limite escolhido. Se já houver uma ação pendente, ela é retomada em vez de aceitar outra oferta. No modo contínuo, uma fila vazia mantém o executor aguardando novas tarefas.
 3. O executor Python usa o perfil ou a publicação da tarefa. O Viralize só recebe a ação para análise após a confirmação do Instagram. Solicitações pendentes, curtidas que já existiam e ações inconclusivas não são enviadas. A recompensa depende da análise do Viralize.
 4. **Pular tarefa** aparece quando é possível ignorar a oferta ou encerrar a ação aceita. **Interromper** cancela a rodada quando possível; não desfaz solicitações já enviadas. O andamento também aparece no terminal da sessão.
 
-O token fica salvo somente no armazenamento local do navegador deste painel, é enviado por Bearer à API oficial apenas nas ações do Viralize e não é salvo pelo backend, nos dados da sessão ou no terminal. Só Instagram é executado nesta integração; não são postados comentários nem executadas tarefas de TikTok. O login e o 2FA existentes não mudam.
+O token é enviado por Bearer à API oficial apenas nas ações do Viralize. O navegador conserva a chave localmente; a execução no servidor também a conserva em `executions.json`, usando a proteção de armazenamento descrita abaixo, para permitir a retomada. O token não é incluído nos dados públicos da sessão nem no terminal. Só Instagram é executado nesta integração; não são postados comentários nem executadas tarefas de TikTok. O login e o 2FA existentes não mudam.
 
 Se o painel mostrar um bloqueio do Cloudflare, o fato de o site abrir no navegador não garante que o servidor do Ramos Bot consiga acessar a API. Envie o código do bloqueio e o ID da requisição, quando exibido, ao suporte do Viralize para verificar o acesso da integração. Não envie seu token ao suporte.
+
+## Ritmo das ações em Macros
+
+O seletor **Ritmo das ações** controla o fluxo normal: consultar a tarefa → aguardar → aceitar → aguardar → executar no Instagram → aguardar → confirmar no Viralize → aguardar a próxima tarefa. O ritmo padrão é **Moderado**. As durações variam dentro das faixas abaixo, sorteadas a cada etapa, em segundos.
+
+| Ritmo | Antes de aceitar e confirmar | Antes de executar | Entre tarefas | Entre rodadas contínuas |
+| --- | --- | --- | --- | --- |
+| Moderado | 2–4 s | 4–8 s | 30–60 s | 60–120 s |
+| Pausado | 3–6 s | 6–12 s | 60–90 s | 120–180 s |
+| Lento | 4–8 s | 8–15 s | 90–150 s | 180–300 s |
+
+O painel mostra **Em intervalo** e a contagem regressiva de cada sessão. **Interromper** encerra a pausa imediatamente. O ritmo escolhido fica salvo no navegador e em cada execução no servidor; prazos pendentes sobrevivem ao reinício. O intervalo entre tarefas também se aplica no modo de rodada única. Ao atingir o limite, a rodada única termina imediatamente; o modo contínuo usa o intervalo entre rodadas.
+
+As faixas são configurações iniciais de espaçamento, sem garantir um tempo ideal para todas as contas ou reproduzir uma pessoa. A consulta de fila vazia continua a cada 30 segundos. Erros, bloqueios e verificações continuam pausando o executor, sem novas tentativas automáticas. Uma interrupção depois de executar a ação no Instagram e antes de confirmar continua exigindo revisão, para evitar repetir a ação.
+
+A API de início individual ou em lote aceita `speed` com `moderate`, `calm` ou `slow`. Clientes antigos que omitem o campo usam `moderate`; valores desconhecidos são recusados antes de iniciar qualquer sessão. O snapshot de estado inclui `viralize_pacing` com as faixas usadas pelo servidor e, por execução, `speed`, `phase` e `next_check_at`.
 
 ## Desenvolvimento
 

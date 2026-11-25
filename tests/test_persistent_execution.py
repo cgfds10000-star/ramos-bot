@@ -67,6 +67,7 @@ class PersistentExecutionChecks(unittest.TestCase):
         service = RamosService(self.temp.name, worker_command=[sys.executable, '-u', '-c', FAKE_WORKER], dependency_check=lambda: True, viralize_api=api)
         self.services.append(service)
         service.queue_poll_seconds = .05
+        service.pacing_seconds = lambda *_: 0
         sid = service.data['sessions'][0]['id']
         if not existing:
             account = service.add_account('minhaconta')

@@ -32,6 +32,7 @@ class BackendChecks(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.service = RamosService(self.temp.name, worker_command=[sys.executable, '-u', '-c', FAKE], dependency_check=lambda: True)
+        self.service.pacing_seconds = lambda *_: 0
         self.session = self.service.data['sessions'][0]['id']
         self.service.data['settings']['continuous_execution'] = False
 
@@ -114,7 +115,7 @@ print(json.dumps({{"type": "done", "ok": True, "authenticated": True}}), flush=T
         return self.service.mutate('POST', ['sessions', self.session, 'viralize', action], {'token': 'vzs_synthetic', 'type': 'follow'})
 
     def viralize_result(self, status):
-        self.wait(lambda: self.service.viralize_runs[self.session]['status'] != 'running')
+        self.wait(lambda: self.service.viralize_runs[self.session]['status'] not in {'running', 'waiting', 'recovering'})
         run = self.service.snapshot()['viralize'][self.session]
         self.assertEqual(run['status'], status, run['message'])
         return run
