@@ -210,3 +210,15 @@ body{background:radial-gradient(ellipse at 50% 58%,#1d06432b,transparent 72%),#0
     padding-bottom: 8px;
   }
 }
+
+/* Remover a decoração inferior que criava uma faixa escura estranha no painel central. */
+@media (max-width: 599px) {
+  .sessions-home:before,
+  .sessions-home:after {
+    display: none;
+  }
+
+  .sessions-home {
+    background: linear-gradient(145deg, #12091e, #090612 60%);
+  }
+}
