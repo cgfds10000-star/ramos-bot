@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { filterLogs, logCounts, logSessionName } from '../src/logs.js';
+import { filterLogs, formatLogTime, logCounts, logSessionName } from '../src/logs.js';
 
 const sessions = [{ id: 'one', name: 'Sessão 1' }, { id: 'two', name: 'Sessão 2' }];
 const logs = [
@@ -30,4 +30,30 @@ test('contadores e filtro Sistema usam os registros reais', () => {
   assert.deepEqual(filterLogs(logs, { sessionId: '__system__' }), [logs[0]]);
   assert.equal(logSessionName(logs[0], sessions), 'Sistema');
   assert.equal(logSessionName({ session_id: 'removed' }, sessions), 'Sessão removida');
+});
+
+test('Hoje filtra pelo dia local e mantém logs antigos sem data', () => {
+  const now = new Date(2026, 10, 25, 17, 30);
+  const entries = [
+    {...logs[0], timestamp: new Date(2026, 10, 24, 23, 59).toISOString()},
+    {...logs[1], timestamp: new Date(2026, 10, 25, 0, 1).toISOString()},
+    {...logs[2], timestamp: new Date(2026, 10, 26, 0, 1).toISOString()},
+    logs[3],
+  ];
+  assert.deepEqual(filterLogs(entries, {period: 'today', now, order: 'oldest'}).map(item => item.id), [2, 4]);
+  assert.equal(filterLogs(entries, {period: 'all', now}).length, 4);
+});
+
+test('período, sessão e severidade se combinam sem alterar o histórico', () => {
+  const now = new Date(2026, 10, 25, 17, 30);
+  const entries = [
+    {...logs[0], timestamp: new Date(2026, 10, 10, 12).toISOString()},
+    {...logs[1], timestamp: new Date(2026, 10, 20, 12).toISOString()},
+    {...logs[2], timestamp: new Date(2026, 10, 25, 12).toISOString()},
+  ];
+  assert.deepEqual(filterLogs(entries, {period: '7days', now}).map(item => item.id), [3, 2]);
+  assert.deepEqual(filterLogs(entries, {period: 'today', now, sessionId: 'two', tone: 'error'}), [entries[2]]);
+  assert.deepEqual(entries.map(item => item.id), [1, 2, 3]);
+  assert.equal(formatLogTime(entries[2]), new Date(entries[2].timestamp).toLocaleTimeString('pt-BR'));
+  assert.equal(formatLogTime(logs[0]), '23:59:58');
 });

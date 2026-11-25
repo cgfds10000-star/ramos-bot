@@ -46,6 +46,30 @@ def normalize_proxy(value):
     return f'{scheme}://{credentials}{host}:{port}'
 
 
+def proxy_fields_url(fields, current=''):
+    if not isinstance(fields, dict):
+        raise ValueError('Configuração de proxy inválida.')
+    saved = urlsplit(current)
+    host = fields.get('host', saved.hostname or '')
+    port = fields.get('port', str(saved.port or ''))
+    scheme = fields.get('scheme', saved.scheme or 'http')
+    user = fields.get('username', unquote(saved.username or ''))
+    password = fields.get('password', unquote(saved.password or ''))
+    if not all(isinstance(value, str) for value in (host, port, scheme, user, password)):
+        raise ValueError('Campos de proxy inválidos.')
+    if type(fields.get('clear_auth', False)) is not bool:
+        raise ValueError('Configuração de autenticação inválida.')
+    if fields.get('clear_auth'):
+        user = password = ''
+    if bool(user) != bool(password):
+        raise ValueError('Informe usuário e senha do proxy.')
+    credentials = f'{quote(user, safe="")}:{quote(password, safe="")}@' if user else ''
+    host = host.strip()
+    if ':' in host and not host.startswith('['):
+        host = '[' + host + ']'
+    return normalize_proxy(f'{scheme}://{credentials}{host}:{port.strip()}')
+
+
 def apply_instagram_proxy(client, proxy):
     # Aplicado depois de restaurar a sessão: uma configuração antiga não prevalece.
     client.set_proxy(normalize_proxy(proxy) if proxy else None)

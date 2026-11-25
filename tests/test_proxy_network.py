@@ -14,11 +14,41 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 from app import ApiError, RamosService, ViralizeApi
-from network import OutboundOpener, apply_instagram_proxy, normalize_proxy
+from network import OutboundOpener, apply_instagram_proxy, normalize_proxy, proxy_fields_url
 from instagrapi import Client
 
 
 class ProxyChecks(unittest.TestCase):
+    def test_split_fields_preserve_saved_auth_and_allow_explicit_removal(self):
+        saved = 'socks5h://synthetic-user:pass%40word@old.example:1080'
+        self.assertEqual(proxy_fields_url({'host': 'new.example', 'port': '1081'}, saved),
+                         'socks5h://synthetic-user:pass%40word@new.example:1081')
+        self.assertEqual(proxy_fields_url({'password': 'new:pass'}, saved),
+                         'socks5h://synthetic-user:new%3Apass@old.example:1080')
+        self.assertEqual(proxy_fields_url({'clear_auth': True}, saved), 'socks5h://old.example:1080')
+        self.assertEqual(proxy_fields_url({'host': '::1', 'port': '8080', 'scheme': 'http'}), 'http://[::1]:8080')
+        for fields in ({'host': 'host', 'port': '99999'}, {'host': 'host/path', 'port': '80'}, {'username': ''}, [], {'password': None}):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                proxy_fields_url(fields, saved)
+
+    def test_saving_split_fields_never_returns_auth_and_invalid_edits_do_not_replace_proxy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = RamosService(directory)
+            try:
+                service.mutate('POST', ['proxy'], {'enabled': True, 'fields': {'scheme': 'http', 'host': 'proxy.example', 'port': '8080', 'username': 'synthetic-user', 'password': 'synthetic-secret'}})
+                service.mutate('POST', ['proxy'], {'enabled': True, 'fields': {'host': 'new.example', 'port': '9090'}})
+                saved = service.data['proxy']
+                self.assertEqual(saved, 'http://synthetic-user:synthetic-secret@new.example:9090')
+                snapshot = service.snapshot()['proxy']
+                self.assertTrue(snapshot['has_auth'])
+                self.assertNotIn('synthetic-secret', json.dumps(snapshot))
+                self.assertNotIn('synthetic-user', json.dumps(snapshot))
+                with self.assertRaises(ApiError):
+                    service.mutate('POST', ['proxy'], {'enabled': True, 'fields': {'port': 'invalid'}})
+                self.assertEqual(service.data['proxy'], saved)
+            finally:
+                service.close()
+
     def test_supplier_format_is_normalized_and_special_characters_are_encoded(self):
         self.assertEqual(normalize_proxy('proxy.example:6969:synthetic-user:pass@word:42'),
                          'http://synthetic-user:pass%40word%3A42@proxy.example:6969')

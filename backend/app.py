@@ -26,7 +26,7 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import Request
 import uuid
 from storage import read_json as storage_read, write_json
-from network import OutboundOpener, check_proxy_ip, normalize_proxy
+from network import OutboundOpener, check_proxy_ip, normalize_proxy, proxy_fields_url
 
 ROOT = Path(__file__).resolve().parent.parent
 USERNAME = re.compile(r"[A-Za-z0-9_.]{1,30}")
@@ -385,7 +385,9 @@ class RamosService:
         text = "".join(char for char in text if char.isprintable() or char == "\n")[:2000]
         with self.lock:
             self.sequence += 1
-            self.logs.append({"id": self.sequence, "session_id": session_id, "time": time.strftime("%H:%M:%S"), "tone": tone if tone in {"info", "success", "warning", "error", "command"} else "info", "message": text})
+            self.logs.append({"id": self.sequence, "session_id": session_id, "time": time.strftime("%H:%M:%S"),
+                              "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                              "tone": tone if tone in {"info", "success", "warning", "error", "command"} else "info", "message": text})
 
     def session(self, session_id):
         value = next((item for item in self.data["sessions"] if item["id"] == session_id), None)
@@ -430,6 +432,7 @@ class RamosService:
             data.pop('proxy_initialized_from_env', None)
             data["proxy"] = {"enabled": bool(parsed.hostname), "host": parsed.hostname or "", "port": parsed.port,
                              'scheme': parsed.scheme, 'check': check if parsed.hostname else None,
+                             'has_auth': bool(parsed.username),
                              'checking': self.proxy_check_running}
             data["logs"] = list(self.logs)
             data["csrf"] = self.csrf
@@ -922,6 +925,11 @@ class RamosService:
                 if self.jobs or any(run['status'] in ACTIVE_RUNS for run in self.viralize_runs.values()):
                     raise ApiError("Aguarde ou encerre as operações antes de alterar o proxy.", 409)
                 value = str(body.get("url", "")).strip()
+                if body.get('enabled') and 'fields' in body:
+                    try:
+                        value = proxy_fields_url(body['fields'], self.data.get('proxy', ''))
+                    except ValueError:
+                        raise ApiError('Confira o host, a porta e as credenciais do proxy.') from None
                 if body.get("enabled") and not value:
                     value = self.data.get("proxy", "")
                     if not value:
