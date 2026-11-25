@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, Cloud, Eye, EyeOff, KeyRound, Minus, Monitor, Play, Plus } from 'lucide-react';
+import { Check, ChevronDown, Eye, EyeOff, Info, KeyRound, Layers3, Minus, Monitor, Play, Plus, RefreshCw, Square } from 'lucide-react';
 
 const VIRALIZE_KEY_STORAGE = 'ramos.viralize.apiKey';
 const VIRALIZE_KEY_PATTERN = /^vzs_[A-Za-z0-9_-]{1,480}$/;
@@ -139,20 +139,23 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
     <section className="macro-execution-card" aria-labelledby="macro-execution-title" aria-busy={busy || running}>
       <div className="macro-execution-state">
         <h2 id="macro-execution-title">Execução</h2>
-        <span className={`macro-stopped ${running ? 'is-running' : ''}`}>{running ? 'Em andamento' : 'Parada'}</span>
+        <p className="macro-execution-subtitle">Configurar e iniciar a execução das tarefas</p>
+        <span className={`macro-stopped ${running ? 'is-running' : ''}`}><Square aria-hidden="true" fill="currentColor"/>{running ? 'Em andamento' : 'Parada'}</span>
       </div>
-      <label className="macro-task-type">Tipo de tarefa
-        <select value={taskType} onChange={event => setTaskType(event.target.value)} disabled={busy || running}>
+      <label className="macro-task-type">
+        <span className="macro-control-caption"><Layers3 aria-hidden="true"/><span>Tipo de tarefa</span></span>
+        <span className="macro-select-wrap"><select value={taskType} onChange={event => setTaskType(event.target.value)} disabled={busy || running}>
           <option value="follow">Seguir perfis</option>
           <option value="like">Curtir publicações</option>
           <option value="follow,like">Seguir e curtir</option>
-        </select>
+        </select><ChevronDown aria-hidden="true"/></span>
       </label>
-      <label className="macro-task-limit">Limite da rodada
+      <label className="macro-task-limit">
+        <span className="macro-control-caption"><RefreshCw aria-hidden="true"/><span>Limite da rodada</span></span>
         <input type="number" min="1" max="500" step="1" inputMode="numeric" value={taskLimit} onChange={event => setTaskLimit(event.target.value)} disabled={busy || running} aria-describedby="macro-limit-help"/>
       </label>
       <button type="button" className="macro-start-button" disabled={!canStart} onClick={() => send('start', selected)}><Play aria-hidden="true"/>Iniciar</button>
-      <div id="macro-limit-help" className="macro-execution-note"><p>Escolha quantas tarefas cada sessão pode executar nesta rodada. A rodada termina antes se a fila ficar vazia.</p><p className="macro-server-note"><Cloud size={17} aria-hidden="true"/>Após iniciar, a execução continua no servidor mesmo com esta página fechada. Ao voltar, você acompanha o estado atual.</p></div>
+      <div id="macro-limit-help" className="macro-execution-note"><Info aria-hidden="true"/><p>Escolha quantas tarefas cada sessão pode executar nesta rodada. A rodada termina antes se a fila ficar vazia.</p></div>
       <ul className="macro-run-list" aria-live="polite">
         {sessions.filter(session => status[session.id] || messages[session.id]).map(session => {
           const run = status[session.id];
