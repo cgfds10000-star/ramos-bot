@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+from email.utils import parsedate_to_datetime
 import io
 import json
 from pathlib import Path
@@ -69,7 +70,7 @@ ERRORS = {
     "ClientNeedsUpgradeError": "O Instagram recusou o perfil do aplicativo usado pelo servidor (needs_upgrade). O diagnóstico da etapa foi registrado.",
     "ClientConnectionError": "O servidor não conseguiu estabelecer conexão com o Instagram. O diagnóstico foi registrado.",
     "ClientRequestTimeout": "O Instagram não respondeu no tempo esperado. Aguarde antes de tentar novamente.",
-    "ClientThrottledError": "O Instagram limitou as requisições desta conexão. Aguarde antes de tentar novamente.",
+    "ClientThrottledError": "O Instagram limitou as requisições desta conexão (HTTP 429). A operação foi interrompida; aguarde antes de tentar novamente.",
     "RateLimitError": "O Instagram limitou as requisições desta conexão. Aguarde antes de tentar novamente.",
     "ProxyAddressIsBlocked": "O Instagram recusou a conexão utilizada pelo servidor. Confira o diagnóstico de acesso.",
     "ClientJSONDecodeError": "O Instagram devolveu uma resposta que o módulo não conseguiu interpretar. O diagnóstico foi registrado.",
@@ -85,6 +86,23 @@ def failure_message(error, diagnostic):
     if name in {'KeyError', 'TypeError', 'AttributeError', 'ValueError'}:
         return f'Falha ao interpretar a resposta do Instagram ({name}{http}). O diagnóstico foi registrado.'
     return f'O Instagram não concluiu esta etapa do login ({name}{http}). O diagnóstico foi registrado.'
+
+
+def rate_limit_delay(error, client):
+    response = getattr(error, 'response', None)
+    if response is None:
+        response = getattr(client, 'last_response', None)
+    if getattr(response, 'status_code', None) != 429 and type(error).__name__ not in {'ClientThrottledError', 'RateLimitError'}:
+        return None
+    raw = str((getattr(response, 'headers', None) or {}).get('Retry-After', '')).strip()
+    if raw.isdecimal() and len(raw) <= 8:
+        return max(1, int(raw))
+    try:
+        deadline = parsedate_to_datetime(raw).timestamp()
+        return max(1, int(deadline - time.time()) + 1)
+    except (ValueError, TypeError, OverflowError):
+        # Pausa local conservadora quando o provedor não informa um prazo.
+        return 900
 
 
 def run(payload):
@@ -185,6 +203,9 @@ def run(payload):
             # O registro auxiliar nunca deve esconder a falha original.
             failed_diagnostic = {'excecao': name}
         failed_diagnostic['origem_erro'] = [{'arquivo': Path(frame.filename).name, 'linha': frame.lineno, 'funcao': frame.name} for frame in traceback.extract_tb(error.__traceback__)[-6:]]
+        delay = rate_limit_delay(error, client)
+        if delay is not None:
+            failed_diagnostic.update(retry_after_seconds=delay, rate_limit_until=time.time() + delay)
         message = failure_message(error, failed_diagnostic)
         if isinstance(error, core.FlowError):
             message = str(error)

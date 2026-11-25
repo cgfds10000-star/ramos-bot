@@ -8,6 +8,7 @@ from collections import deque
 import hmac
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -45,6 +46,8 @@ def safe_login_summary(data):
             summary[key] = value
     if type(data.get('http')) is int and 100 <= data['http'] <= 599:
         summary['http'] = data['http']
+    if type(data.get('retry_after_seconds')) is int and data['retry_after_seconds'] > 0:
+        summary['retry_after_seconds'] = data['retry_after_seconds']
     for key in ('sessao_recebida', 'caa_iniciado', 'continuacao_accounts_solicitada'):
         if type(data.get(key)) is bool:
             summary[key] = data[key]
@@ -271,6 +274,7 @@ class RamosService:
         for session in self.data["sessions"]:
             session.update(status="disconnected", authenticated=False, challenge=None)
         self.data["settings"]["two_factor_method"] = "autenticador"
+        self.restore_instagram_pause()
         if not self.data["sessions"]:
             self.data["sessions"].append(self.new_session())
         self.save()
@@ -282,6 +286,25 @@ class RamosService:
 
     def save(self):
         private_json(self.state_file, self.data)
+
+    def restore_instagram_pause(self):
+        # O prazo original sobrevive a reinícios; ler o arquivo não renova a pausa.
+        for path in self.directory.glob('accounts/*/diagnostic.json'):
+            try:
+                self.record_instagram_limit(storage_read(path), observed_at=path.stat().st_mtime)
+            except Exception:
+                continue
+
+    def record_instagram_limit(self, diagnostic, observed_at=None):
+        if not isinstance(diagnostic, dict) or (diagnostic.get('http') != 429 and diagnostic.get('excecao') not in {'ClientThrottledError', 'RateLimitError'}):
+            return
+        until = diagnostic.get('rate_limit_until')
+        if type(until) not in {int, float} or not math.isfinite(until):
+            delay = diagnostic.get('retry_after_seconds', 900)
+            if type(delay) is not int or delay <= 0:
+                delay = 900
+            until = (time.time() if observed_at is None else observed_at) + delay
+        self.data['instagram_retry_at'] = max(self.data.get('instagram_retry_at', 0), until)
 
     def log(self, session_id, tone, message, hidden=()):
         text = str(message)
@@ -344,6 +367,10 @@ class RamosService:
                 raise ApiError("A rodada do Viralize ainda está em andamento nesta sessão.", 409)
             if session_id in self.jobs:
                 raise ApiError("Essa sessão já está executando uma operação.", 409)
+            remaining = self.data.get('instagram_retry_at', 0) - time.time()
+            if remaining > 0:
+                minutes = max(1, math.ceil(remaining / 60))
+                raise ApiError(f"O Instagram respondeu HTTP 429. As operações estão em pausa nesta conexão. Aguarde {minutes} min antes de tentar novamente; a liberação depende do Instagram.", 429)
             if not self.dependency_check():
                 raise ApiError("O módulo de Instagram ainda não está instalado no servidor. Execute a instalação indicada no LEIA-ME.", 503)
             mode = payload.get("mode")
@@ -421,6 +448,7 @@ class RamosService:
                     if kind == "log":
                         self.log(session_id, event.get("tone"), event.get("message", ""), job["hidden"])
                     elif kind == 'diagnostic':
+                        self.record_instagram_limit(event.get('data'))
                         log_login_diagnostic(event.get('data'), 'worker')
                     elif kind == "input_required":
                         session["status"] = "awaiting_input"
