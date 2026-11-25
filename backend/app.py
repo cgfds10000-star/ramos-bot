@@ -251,14 +251,15 @@ class RamosService:
         try:
             self.data = storage_read(self.state_file)
         except FileNotFoundError:
-            self.data = {"version": 1, "accounts": [], "sessions": [], "macros": [], "proxy": "", "settings": {"two_factor_method": "autenticador"}}
+            self.data = {"version": 1, "accounts": [], "sessions": [], "macros": [], "proxy": "", "settings": {"two_factor_method": "auto"}}
         except (ValueError, OSError):
             raise RuntimeError("Não foi possível abrir data/state.json. Preserve o arquivo e verifique seu conteúdo.") from None
         if self.data.get("version") != 1 or any(not isinstance(self.data.get(key), list) for key in ("accounts", "sessions", "macros")):
             raise RuntimeError("Formato de dados do Ramos Bot não reconhecido.")
         for session in self.data["sessions"]:
             session.update(status="disconnected", authenticated=False, challenge=None)
-        self.data["settings"]["two_factor_method"] = "autenticador"
+        # Preserve the Python CLI's automatic method selection and continuation.
+        self.data["settings"]["two_factor_method"] = "auto"
         self.data['settings']['execution_mode'] = 'server'
         self.data['settings'].setdefault('continuous_execution', True)
         initial_proxy = os.environ.get('RAMOS_INITIAL_PROXY', '')
@@ -947,7 +948,7 @@ class RamosService:
                 self.log(None, "info", "Conexão de saída atualizada para Instagram e Viralize. Reconecte as contas.")
             elif route == ["settings"] and method == "POST":
                 value = body.get("two_factor_method")
-                if value != "autenticador":
+                if value != "auto":
                     raise ApiError("Método de autenticação inválido.")
                 if body.get('execution_mode', 'server') != 'server':
                     raise ApiError('O modo de execução suportado é no servidor.')

@@ -116,7 +116,9 @@ def _run(payload, core):
             client.set_settings(settings)
             client._local_login_username = settings.get("_local_login_username")
         client.challenge_code_handler = core.read_verification_code
-        client.two_factor_method = payload.get("two_factor_method", "autenticador")
+        # Match the CLI login flow: let the Instagram response determine whether
+        # the same challenge is TOTP, SMS, email, or a backup code.
+        client.two_factor_method = payload.get("two_factor_method", "auto")
         apply_instagram_proxy(client, payload.get("proxy", ""))
         handle = core.valid_username(payload["username"])
         owner = getattr(client, "_local_login_username", None)

@@ -311,8 +311,8 @@ print(json.dumps({{"type": "done", "ok": True, "authenticated": True}}), flush=T
         self.assertTrue(command_payload({'command':'seguir','target':'12345','by_id':True})['by_id'])
         self.assertTrue(command_payload({'command':'buscar','target':'teste','general':True})['general'])
         with self.assertRaises(ApiError): command_payload({'command':'seguir','target':'teste','by_id':True})
-        with self.assertRaises(ApiError): self.service.mutate('POST',['settings'],{'two_factor_method':'auto'})
-        self.assertEqual(self.service.snapshot()['settings']['two_factor_method'],'autenticador')
+        self.assertEqual(self.service.snapshot()['settings']['two_factor_method'], 'auto')
+        with self.assertRaises(ApiError): self.service.mutate('POST',['settings'],{'two_factor_method':'autenticador'})
 
     def test_session_storage_is_encrypted_and_roundtrips(self):
         from cryptography.fernet import Fernet

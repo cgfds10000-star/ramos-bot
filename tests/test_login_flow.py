@@ -91,6 +91,7 @@ class FakeBloksInstagram(FakeInstagram):
     def login(self, username, password):
         self.username = username
         self.bloks_caa_login()
+        self.last_json = dict(self.outcome)
         raise TwoFactorRequired('Verification required')
 
     def bloks_apply_login_response(self, result):
@@ -107,7 +108,7 @@ class WebTwoFactorChecks(unittest.TestCase):
 
     def worker_run(self, **changes):
         output = io.StringIO()
-        payload = {'username': 'teste', 'password': 'synthetic-password', 'mode': 'login', 'two_factor_method': 'autenticador', **changes}
+        payload = {'username': 'teste', 'password': 'synthetic-password', 'mode': 'login', 'two_factor_method': 'auto', **changes}
         if payload.get('two_factor_method') is None:
             payload.pop('two_factor_method', None)
         with tempfile.TemporaryDirectory() as directory, patch.object(core, 'configure_client', return_value=self.client), patch.object(core, 'load_client_class'), patch.object(core, 'save_client'), patch.object(core, 'safe_diagnostic', return_value={}), patch.object(core, 'validate_action_session') as validate, patch.object(worker, 'write_json'), patch.object(worker, 'apply_instagram_proxy'), patch.object(sys, 'stdin', io.StringIO('{"code":"003754"}\n')), patch.object(worker, 'OUTPUT', output):
@@ -115,26 +116,24 @@ class WebTwoFactorChecks(unittest.TestCase):
         events = [json.loads(line) for line in output.getvalue().splitlines()]
         return events, output.getvalue(), validate
 
-    def test_worker_honors_authenticator_selection_and_uses_the_script_flow(self):
-        # O cliente nasce em auto no arquivo fornecido; o painel seleciona autenticador.
+    def test_worker_uses_the_same_automatic_two_factor_flow_as_the_script(self):
         self.assertEqual(self.client.two_factor_method, 'auto')
         events, output, validate = self.worker_run()
-        self.assertEqual(self.client.two_factor_method, 'autenticador')
-        self.assertEqual([event['kind'] for event in events if event['type'] == 'input_required'], ['authenticator'])
+        self.assertEqual(self.client.two_factor_method, 'auto')
+        self.assertEqual([event['kind'] for event in events if event['type'] == 'input_required'], ['two_factor'])
         self.assertEqual(events[-1], {'type': 'done', 'ok': True, 'authenticated': True})
         self.assertEqual(self.client.caa_calls, 1)
         self.assertEqual(self.client.legacy_calls, 0)
         self.client.bloks_two_step_verification_select_method.assert_called_once_with('synthetic-context', selected_method='totp')
-        self.client.bloks_two_step_verification_enter_totp_code.assert_called_once_with('synthetic-context')
-        self.client.bloks_two_step_verification_verify_code.assert_called_once_with('synthetic-context', '003754', challenge='totp', should_trust_device=False)
+        self.client.bloks_two_step_verification_verify_code.assert_called_once_with('synthetic-context', '003754', challenge='totp')
         validate.assert_called_once_with(self.client, 'teste')
         self.assertNotIn('003754', output)
         self.assertNotIn('synthetic-password', output)
 
-    def test_missing_worker_selection_defaults_to_the_panel_authenticator_method(self):
+    def test_missing_worker_selection_defaults_to_the_python_automatic_method(self):
         events, _, _ = self.worker_run(two_factor_method=None)
         self.assertEqual(events[-1]['ok'], True)
-        self.assertEqual(self.client.two_factor_method, 'autenticador')
+        self.assertEqual(self.client.two_factor_method, 'auto')
 
     def test_rejected_code_is_not_resent_and_never_connects_the_session(self):
         self.client.accept_code = False
@@ -232,7 +231,7 @@ class NativeAuthenticatorChecks(unittest.TestCase):
 
 
 # Executa o worker e o núcleo reais, substituindo somente as respostas externas.
-# O caminho autenticador exige should_trust_device=False e falha se voltar a auto.
+# O worker web deve usar a continuação genérica automática, igual ao CLI.
 WORKER_HARNESS = r"""
 import json, time
 from contextlib import ExitStack
@@ -247,9 +246,9 @@ def apply_response(client, result):
         return True
     return False
 
-def verify(client, context, code, *, challenge, should_trust_device):
+def verify(client, context, code, *, challenge):
     assert context == 'synthetic-context'
-    assert challenge == 'totp' and should_trust_device is False
+    assert challenge == 'totp'
     time.sleep(.15)
     return {'synthetic_accepted': code == '003754'}
 
@@ -258,7 +257,11 @@ def validate(client, owner):
     client.action_session_validated = True
 
 with ExitStack() as stack:
-    stack.enter_context(patch.object(Client, 'bloks_caa_login', return_value={'logged_in': False, 'two_step_verification_context': 'synthetic-context', 'totp_two_factor_on': True}))
+    def caa(client, *args, **kwargs):
+        result = {'logged_in': False, 'two_step_verification_context': 'synthetic-context', 'totp_two_factor_on': True}
+        client.last_json = result
+        return result
+    stack.enter_context(patch.object(Client, 'bloks_caa_login', new=caa))
     for name in ['bloks_two_step_verification_entrypoint', 'bloks_two_step_verification_method_picker', 'bloks_two_step_verification_select_method', 'bloks_two_step_verification_enter_totp_code']:
         stack.enter_context(patch.object(Client, name, return_value={}))
     stack.enter_context(patch.object(Client, 'bloks_two_step_verification_verify_code', verify))
@@ -283,7 +286,7 @@ class WorkerProtocolChecks(unittest.TestCase):
                     time.sleep(.01)
                 challenge = service.session(sid)['challenge']
                 self.assertIsNotNone(challenge)
-                self.assertEqual(challenge['kind'], 'authenticator')
+                self.assertEqual(challenge['kind'], 'two_factor')
                 self.assertEqual(service.session(sid)['status'], 'awaiting_input')
                 self.assertFalse(service.session(sid)['authenticated'])
                 time.sleep(.1)
