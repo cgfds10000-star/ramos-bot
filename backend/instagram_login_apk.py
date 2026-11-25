@@ -35,7 +35,8 @@ instagrapi 3.2.19. O nucleo CAA e o mesmo que autenticou a conta; login e
 busca foram confirmados pelo usuario. Codigo e aprovacao continuam manuais.
 As acoes seguem as rotas REST analisadas no APK 458.0.0.0.45, validam o ID
 autenticado e conferem o estado antes de confirmar seguir/curtir.
-Nao ha fallback para login legado nem repeticao automatica de escritas.
+A continuacao accounts so e permitida uma vez quando o proprio CAA a solicita.
+Senhas e codigos nao sao repetidos em ciclos de login.
 Testes de regressao usam sessoes sinteticas e respostas simuladas.
 """
 from __future__ import annotations
@@ -56,7 +57,7 @@ import unicodedata
 from urllib.parse import urlsplit
 
 CLIENT_VERSION = "3.2.19"
-REVISION = "caa-4-acoes-4-totp"
+REVISION = "caa-4-acoes-5-totp-continuacao"
 
 
 # ---------------------------------------------------------------------------
@@ -716,6 +717,7 @@ def load_client_class():
             self.authenticator_in_progress = False
             self.authenticator_state = "nao_solicitado"
             self.authenticator_branch = None
+            self.caa_legacy_continuation_used = False
             super().__init__(*args, **kwargs)
 
         def private_request(self, endpoint, *args, **kwargs):
@@ -750,7 +752,18 @@ def load_client_class():
             return value
 
         def bloks_caa_login(self, *args, **kwargs):
+            if self.caa_legacy_continuation_used:
+                raise FlowError("O Instagram nao concluiu a continuacao do login. A senha nao foi reenviada em outra tentativa CAA.")
             outcome = super().bloks_caa_login(*args, **kwargs)
+            self.caa_last_outcome = outcome
+            # Uma resposta CAA pode conter o identificador TOTP nativo sem a
+            # referencia AP que aciona o resolvedor da biblioteca.
+            if (not outcome.get("logged_in") and self.two_factor_method == "autenticador"
+                    and self.authenticator_state == "nao_solicitado"):
+                data = {"resultado_caa": outcome, "resposta": self.last_json}
+                if authenticator_context(self, data) or native_authenticator_info(data):
+                    authenticator_login(self, data)
+                    self.profile_session_completed = True
             # A entrada de verificacao tambem pode devolver a sessao diretamente,
             # sem passar pela tela de codigo que a biblioteca espera.
             if self.profile_session_completed and self.user_id and (self.authorization or self.sessionid):
@@ -772,8 +785,15 @@ def load_client_class():
             raise FlowError("O Instagram exigiu uma verificação sem contexto TOTP disponível. A tentativa foi encerrada; nenhum código foi enviado.")
 
         def login_legacy(self, *args, **kwargs):
-            # Nesta conta o legado ja retornou needs_upgrade. Preservar a falha
-            # CAA original em vez de repetir o login e mascara-la com outro erro.
+            # Respeitar a continuacao explicita do CAA; nao iniciar a rota
+            # accounts por tentativa nem repetir um codigo ja enviado.
+            markers = self._caa_result_action_markers(self.caa_last_outcome)
+            if (not self.caa_legacy_continuation_used
+                    and self.authenticator_state == "nao_solicitado"
+                    and any(marker.startswith("CAA_LOGIN_FALLBACK:") for marker in markers)):
+                self.caa_legacy_continuation_used = True
+                CONSOLE.info("Continuando a etapa de autenticacao solicitada pelo Instagram...")
+                return super().login_legacy(*args, **kwargs)
             reason = CAA_REASONS.get(self.caa_last_outcome.get("reason"), "continuacao_nao_reconhecida")
             raise FlowError("A verificacao CAA nao foi concluida: " + reason +
                             ". A rota antiga foi interrompida; veja o diagnostico.")
@@ -955,6 +975,7 @@ def safe_diagnostic(client, outcome, error=None):
         "metodo_2fa": getattr(client, "two_factor_method", "auto"),
         "ramo_autenticador": getattr(client, "authenticator_branch", None),
         "estado_autenticador": getattr(client, "authenticator_state", "nao_solicitado"),
+        "continuacao_accounts_solicitada": getattr(client, "caa_legacy_continuation_used", False),
         "etapas": trace[-100:],
     }
 
