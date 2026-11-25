@@ -65,11 +65,29 @@ body{background:radial-gradient(ellipse at 50% 58%,#1d06432b,transparent 72%),#0
 
 .is-macros :is(.macro-plugin-card, .macro-execution-card) {
   border: 0;
+  background: none;
   box-shadow: none;
+}
+
+.is-macros :is(.macro-plugin-card, .macro-execution-card)::after {
+  display: none;
 }
 
 .app-shell.is-macros > .bottom-nav {
   border: 0;
+}
+
+.app-shell > .header {
+  border-bottom: 1px solid #6b278e;
+}
+
+.bottom-nav button.active {
+  outline: 2px solid #cf8bff;
+  outline-offset: 1px;
+}
+
+.bottom-nav button.active:focus-visible {
+  outline-color: #f5dbff;
 }
 
 .is-home .sessions-heading h2,
@@ -88,7 +106,16 @@ body{background:radial-gradient(ellipse at 50% 58%,#1d06432b,transparent 72%),#0
     height: 100dvh;
     min-height: 0;
     overflow: hidden;
-    padding: max(20px, env(safe-area-inset-top)) 0 0 !important;
+    padding: env(safe-area-inset-top) 0 0 !important;
+  }
+
+  .app-shell > .header::before {
+    content: '';
+    position: absolute;
+    inset: auto 0 100%;
+    height: env(safe-area-inset-top);
+    background: #10091b;
+    pointer-events: none;
   }
 
   .app-shell:is(.is-home, .is-workspace)::after {
@@ -126,7 +153,7 @@ body{background:radial-gradient(ellipse at 50% 58%,#1d06432b,transparent 72%),#0
     margin: 0;
     border: 0;
     border-radius: 0;
-    padding: 5px max(8px, env(safe-area-inset-right)) calc(5px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    padding: 6px max(8px, env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
   }
 
   .app-shell > nav.bottom-nav button {
@@ -141,6 +168,10 @@ body{background:radial-gradient(ellipse at 50% 58%,#1d06432b,transparent 72%),#0
   .app-shell > nav.bottom-nav svg {
     width: clamp(24px, calc(54 * var(--u)), 32px);
     height: clamp(24px, calc(54 * var(--u)), 32px);
+  }
+
+  .app-shell > nav.bottom-nav button:not(.active):focus-visible {
+    outline-offset: 2px;
   }
 }
 
