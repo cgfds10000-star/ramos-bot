@@ -484,7 +484,8 @@ class RamosService:
                               "two_factor_method": "autenticador"}
             try:
                 process = subprocess.Popen(self.worker_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                           text=True, encoding="utf-8", bufsize=1, cwd=ROOT / "backend")
+                                           text=True, encoding="utf-8", bufsize=1, cwd=ROOT / "backend",
+                                           env={**os.environ, "PYTHONIOENCODING": "utf-8"})
                 job["process"] = process
                 process.stdin.write(json.dumps(worker_payload) + "\n")
                 process.stdin.flush()

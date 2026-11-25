@@ -35,6 +35,16 @@ test('código manual preserva zeros iniciais e segue o método solicitado', asyn
   await assert.rejects(resolveVerificationCode(publicTestSecret, 'code'), /SMS ou e-mail/);
 });
 
+test('login two_factor converte a chave Base32 e mantém os códigos manuais e de backup', async () => {
+  const formatted = 'gezd gnbv gy3t qojq\n gezd gnbv gy3t qojq';
+  assert.equal(verificationInputKind(formatted, 'two_factor'), 'secret');
+  assert.equal(await resolveVerificationCode(formatted, 'two_factor', {now: () => 31000}), '287082');
+  assert.equal(await resolveVerificationCode('0 0 3 7 5 4', 'two_factor'), '003754');
+  assert.equal(await resolveVerificationCode('00 123 456', 'two_factor'), '00123456');
+  assert.equal(verificationInputKind(formatted, 'code'), null);
+  await assert.rejects(resolveVerificationCode('GEZD0NBVGY3TQOJQ', 'two_factor'));
+});
+
 test('chave próxima de expirar aguarda uma nova janela antes de gerar o código', async () => {
   let clock = 58900, waited = 0;
   const code = await resolveVerificationCode(publicTestSecret, 'authenticator', {

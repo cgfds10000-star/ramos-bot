@@ -1,0 +1,6 @@
+.verification-totp{
+  display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:14px;padding:18px 12px;
+  border:1px solid #413459;border-radius:10px;background:#101827;color:#b9c6dc;
+}
+.verification-totp output{color:#69aaff;font-size:2rem;font-weight:700;line-height:1.2;letter-spacing:.12em;font-variant-numeric:tabular-nums}
+.verification-totp .verification-totp-validity{padding:4px 11px;border-radius:999px;background:#eef3fa;color:#121a29;font-size:.75rem;font-weight:600}

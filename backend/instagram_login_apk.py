@@ -554,6 +554,13 @@ def read_authenticator_code():
     return code
 
 
+def read_two_factor_code():
+    code = getpass.getpass("Digite o codigo do autenticador/SMS ou codigo de backup solicitado: ").strip()
+    if not code:
+        raise FlowError("Codigo nao informado.")
+    return code
+
+
 def authenticator_login(client, data):
     """Continuar a tentativa existente; nao reenviar senha nem repetir o codigo."""
     context = authenticator_context(client, data)
@@ -758,10 +765,11 @@ def load_client_class():
             self.caa_last_outcome = outcome
             # Uma resposta CAA pode conter o identificador TOTP nativo sem a
             # referencia AP que aciona o resolvedor da biblioteca.
-            if (not outcome.get("logged_in") and self.two_factor_method == "autenticador"
-                    and self.authenticator_state == "nao_solicitado"):
+            if not outcome.get("logged_in") and self.authenticator_state == "nao_solicitado":
                 data = {"resultado_caa": outcome, "resposta": self.last_json}
-                if authenticator_context(self, data) or native_authenticator_info(data):
+                context = authenticator_context(self, data)
+                if ((self.two_factor_method == "autenticador" and context)
+                        or (not context and native_authenticator_info(data))):
                     authenticator_login(self, data)
                     self.profile_session_completed = True
             # A entrada de verificacao tambem pode devolver a sessao diretamente,
@@ -775,10 +783,12 @@ def load_client_class():
         def bloks_ap_two_step_verification_entrypoint(self, context_data, bloks_versioning_id="", domain=None):
             parent_entry = super().bloks_ap_two_step_verification_entrypoint
             result = parent_entry(context_data, bloks_versioning_id=bloks_versioning_id, domain=domain)
+            if self.bloks_apply_login_response(result) and self.user_id and (self.authorization or self.sessionid):
+                self.profile_session_completed = True
+                return result
+            if self.two_factor_method == "auto" and self.bloks_extract_context_data(result, PROFILE_CODE):
+                return result
             if self.two_factor_method == "autenticador":
-                if self.bloks_apply_login_response(result) and self.user_id and (self.authorization or self.sessionid):
-                    self.profile_session_completed = True
-                    return result
                 result = authenticator_login(self, result)
                 self.profile_session_completed = True
                 return result
@@ -981,31 +991,37 @@ def safe_diagnostic(client, outcome, error=None):
 
 
 def continue_two_factor(client, error):
+    if getattr(client, "authenticator_state", "nao_solicitado") != "nao_solicitado":
+        raise FlowError("A tentativa do autenticador foi interrompida pelo servidor. Nenhum codigo ou etapa foi repetido.")
+    data = {"resposta": client.last_json, "resultado_caa": client.caa_last_outcome}
+    context = getattr(error, "two_step_verification_context", "")
+    if isinstance(context, str) and context:
+        data["two_step_verification_context"] = context
+    info = getattr(error, "two_factor_info", None)
+    if isinstance(info, dict):
+        data["two_factor_info"] = info
     if getattr(client, "two_factor_method", "auto") == "autenticador":
-        if getattr(client, "authenticator_state", "nao_solicitado") != "nao_solicitado":
-            raise FlowError("A tentativa do autenticador foi interrompida pelo servidor. Nenhum codigo ou etapa foi repetido.")
-        data = {"resposta": client.last_json, "resultado_caa": client.caa_last_outcome}
-        context = getattr(error, "two_step_verification_context", "")
-        if isinstance(context, str) and context:
-            data["two_step_verification_context"] = context
-        info = getattr(error, "two_factor_info", None)
-        if isinstance(info, dict):
-            data["two_factor_info"] = info
         authenticator_login(client, data)
         return bool(client.user_id and (client.authorization or client.sessionid))
-    # Continuar o contexto recebido, sem repetir o envio de usuario e senha.
-    context = getattr(error, "two_step_verification_context", "")
-    data = dict(client.last_json) if isinstance(client.last_json, dict) else {}
-    if context:
-        data["two_step_verification_context"] = context
-    context = client._extract_two_step_verification_context(data)
+    context = authenticator_context(client, data)
     if not context:
+        if native_authenticator_info(data):
+            authenticator_login(client, data)
+            return bool(client.user_id and (client.authorization or client.sessionid))
         raise FlowError("O servidor pediu dois fatores, mas nao devolveu um contexto utilizavel. Conclua no aplicativo.")
     data["two_step_verification_context"] = context
-    code = getpass.getpass("Digite o codigo do autenticador/SMS ou codigo de backup solicitado: ").strip()
-    if not code:
-        raise FlowError("Codigo nao informado.")
-    return client._login_with_bloks_two_factor(code, data, error)
+    client.authenticator_state = "aguardando_codigo"
+    code = None
+    try:
+        code = read_two_factor_code()
+        client.authenticator_state = "codigo_enviado"
+        accepted = client._login_with_bloks_two_factor(code, data, error)
+        if not accepted or not client.user_id or not (client.authorization or client.sessionid):
+            raise FlowError("A resposta do 2FA nao confirmou uma sessao autenticada. O codigo nao foi repetido.")
+        client.authenticator_state = "autenticado"
+        return True
+    finally:
+        code = None
 
 
 def show_failure(diagnostic):

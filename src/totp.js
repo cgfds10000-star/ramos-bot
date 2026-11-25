@@ -27,11 +27,15 @@ export function decodeBase32(value) {
   return new Uint8Array(bytes);
 }
 
+export function acceptsAuthenticatorSecret(challengeKind) {
+  return challengeKind === 'authenticator' || challengeKind === 'two_factor';
+}
+
 export function verificationInputKind(value, challengeKind) {
   const clean = String(value || '').replace(/\s+/g, '');
   const digits = challengeKind === 'authenticator' ? /^[0-9]{6}$/ : /^[0-9]{6,8}$/;
   if (digits.test(clean)) return 'code';
-  if (challengeKind !== 'authenticator') return null;
+  if (!acceptsAuthenticatorSecret(challengeKind)) return null;
   try { const bytes = decodeBase32(clean); bytes.fill(0); return 'secret'; }
   catch { return null; }
 }
@@ -64,8 +68,8 @@ export async function resolveVerificationCode(value, challengeKind, {now = Date.
   signal?.throwIfAborted();
   const kind = verificationInputKind(value, challengeKind);
   if (kind === 'code') return String(value).replace(/\s+/g, '');
-  if (kind !== 'secret') throw new Error(challengeKind === 'authenticator'
-    ? 'Informe o código de 6 dígitos ou a chave Base32 do autenticador.'
+  if (kind !== 'secret') throw new Error(acceptsAuthenticatorSecret(challengeKind)
+    ? 'Informe a chave secreta Base32 ou o código 2FA solicitado pelo Instagram.'
     : 'Informe somente o código numérico recebido por SMS ou e-mail.');
   const remaining = 30000 - (now() % 30000);
   if (remaining <= 3000) await sleep(remaining + 50, signal);

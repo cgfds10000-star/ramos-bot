@@ -66,6 +66,24 @@ class BackendChecks(unittest.TestCase):
         self.assertFalse(restored.session(self.session)['authenticated'])
         self.assertEqual(restored.session(self.session)['status'], 'disconnected')
 
+    def test_two_factor_backup_code_reaches_the_waiting_worker_once(self):
+        script = FAKE.replace('"authenticator"', '"two_factor"').replace('"123456"', '"00123456"')
+        script = script.replace('"Codigo"', '"Código do autenticador"').replace('}),flush=True)', '},ensure_ascii=False),flush=True)')
+        self.service.worker_command = [sys.executable, '-u', '-c', script]
+        self.service.start(self.session, {'mode': 'login', 'username': 'teste', 'password': 'synthetic-password'})
+        self.wait(lambda: self.service.session(self.session)['challenge'] is not None)
+        challenge = self.service.session(self.session)['challenge']
+        self.assertEqual(challenge['kind'], 'two_factor')
+        self.assertEqual(challenge['message'], 'Código do autenticador')
+        body = {'challenge_id': challenge['id'], 'code': '00123456'}
+        self.service.submit_input(self.session, body)
+        with self.assertRaises(ApiError):
+            self.service.submit_input(self.session, body)
+        self.wait(lambda: self.session not in self.service.jobs)
+        self.assertTrue(self.service.session(self.session)['authenticated'])
+        self.assertNotIn('00123456', json.dumps(self.service.snapshot()))
+        self.assertNotIn('00123456', self.service.state_file.read_text())
+
     def test_cancel_prevents_a_late_success(self):
         self.service.start(self.session, {'mode': 'login', 'username': 'teste', 'password': 'synthetic'})
         self.wait(lambda: self.service.session(self.session)['challenge'] is not None)

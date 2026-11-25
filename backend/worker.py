@@ -76,6 +76,7 @@ def run(payload):
     core.read_json = read_json
     core.save_private_json = write_json
     core.read_authenticator_code = lambda: ask_code("authenticator", "Informe os 6 dígitos do aplicativo autenticador.")
+    core.read_two_factor_code = lambda: ask_code("two_factor", "Digite o código do autenticador/SMS ou o código de backup solicitado pelo Instagram.")
     core.read_verification_code = lambda *_: ask_code()
     directory = Path(payload["directory"]).resolve()
     directory.mkdir(parents=True, exist_ok=True)
@@ -92,7 +93,7 @@ def run(payload):
             client.set_settings(settings)
             client._local_login_username = settings.get("_local_login_username")
         client.challenge_code_handler = core.read_verification_code
-        client.two_factor_method = "autenticador"
+        client.two_factor_method = "auto"
         apply_instagram_proxy(client, payload.get("proxy", ""))
         handle = core.valid_username(payload["username"])
         owner = getattr(client, "_local_login_username", None)
