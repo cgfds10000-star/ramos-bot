@@ -8,7 +8,6 @@ from collections import deque
 import hmac
 import importlib.util
 import json
-import math
 import os
 from pathlib import Path
 import re
@@ -31,50 +30,6 @@ USERNAME = re.compile(r"[A-Za-z0-9_.]{1,30}")
 COMMANDS = {"buscar", "perfil", "seguir", "curtir"}
 BUSY = {"connecting", "running", "awaiting_input"}
 MAX_VIRALIZE_TASKS_PER_ROUND = 500
-
-
-def safe_login_summary(data):
-    """Resumo para logs privados de operação; nunca copiar respostas ou credenciais."""
-    if not isinstance(data, dict):
-        return {}
-    summary = {}
-    for key in ('revisao', 'versao_biblioteca', 'app_version', 'version_code', 'excecao', 'erro', 'motivo_caa', 'estado_autenticador', 'ramo_autenticador'):
-        value = data.get(key)
-        if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', value):
-            if re.search(r'(?i)(token|password|sessionid|authorization|ghp_|vzs_|rlwy_)', value):
-                value = 'oculto'
-            summary[key] = value
-    if type(data.get('http')) is int and 100 <= data['http'] <= 599:
-        summary['http'] = data['http']
-    if type(data.get('retry_after_seconds')) is int and data['retry_after_seconds'] > 0:
-        summary['retry_after_seconds'] = data['retry_after_seconds']
-    for key in ('sessao_recebida', 'caa_iniciado', 'continuacao_accounts_solicitada'):
-        if type(data.get(key)) is bool:
-            summary[key] = data[key]
-    frames = data.get('origem_erro')
-    if isinstance(frames, list):
-        summary['origem_erro'] = [{key: value for key, value in frame.items() if (key in {'arquivo', 'funcao'} and isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.]{1,80}', value)) or (key == 'linha' and type(value) is int and 0 < value < 100000)} for frame in frames[-6:] if isinstance(frame, dict)]
-    steps = data.get('etapas')
-    if isinstance(steps, list):
-        summary['etapas'] = [{key: value for key, value in step.items() if (key == 'etapa' and isinstance(value, str) and re.fullmatch(r'[a-z0-9_]{1,60}', value)) or (key == 'http' and type(value) is int and 100 <= value <= 599)} for step in steps[-12:] if isinstance(step, dict)]
-    return summary
-
-
-def log_login_diagnostic(data, source):
-    print(json.dumps({'event': 'ramos_login_diagnostic', 'source': source, **safe_login_summary(data)}, ensure_ascii=False), flush=True)
-
-
-def log_saved_login_diagnostics(directory):
-    try:
-        paths = sorted(directory.glob('accounts/*/diagnostic.json'), key=lambda path: path.stat().st_mtime, reverse=True)[:5]
-    except OSError:
-        return
-    for path in paths:
-        try:
-            log_login_diagnostic(storage_read(path), 'stored')
-        except Exception:
-            # Diagnóstico ausente, inválido ou ilegível não impede a inicialização.
-            continue
 
 
 class ApiError(Exception):
@@ -274,7 +229,6 @@ class RamosService:
         for session in self.data["sessions"]:
             session.update(status="disconnected", authenticated=False, challenge=None)
         self.data["settings"]["two_factor_method"] = "autenticador"
-        self.restore_instagram_pause()
         if not self.data["sessions"]:
             self.data["sessions"].append(self.new_session())
         self.save()
@@ -286,25 +240,6 @@ class RamosService:
 
     def save(self):
         private_json(self.state_file, self.data)
-
-    def restore_instagram_pause(self):
-        # O prazo original sobrevive a reinícios; ler o arquivo não renova a pausa.
-        for path in self.directory.glob('accounts/*/diagnostic.json'):
-            try:
-                self.record_instagram_limit(storage_read(path), observed_at=path.stat().st_mtime)
-            except Exception:
-                continue
-
-    def record_instagram_limit(self, diagnostic, observed_at=None):
-        if not isinstance(diagnostic, dict) or (diagnostic.get('http') != 429 and diagnostic.get('excecao') not in {'ClientThrottledError', 'RateLimitError'}):
-            return
-        until = diagnostic.get('rate_limit_until')
-        if type(until) not in {int, float} or not math.isfinite(until):
-            delay = diagnostic.get('retry_after_seconds', 900)
-            if type(delay) is not int or delay <= 0:
-                delay = 900
-            until = (time.time() if observed_at is None else observed_at) + delay
-        self.data['instagram_retry_at'] = max(self.data.get('instagram_retry_at', 0), until)
 
     def log(self, session_id, tone, message, hidden=()):
         text = str(message)
@@ -367,10 +302,6 @@ class RamosService:
                 raise ApiError("A rodada do Viralize ainda está em andamento nesta sessão.", 409)
             if session_id in self.jobs:
                 raise ApiError("Essa sessão já está executando uma operação.", 409)
-            remaining = self.data.get('instagram_retry_at', 0) - time.time()
-            if remaining > 0:
-                minutes = max(1, math.ceil(remaining / 60))
-                raise ApiError(f"O Instagram respondeu HTTP 429. As operações estão em pausa nesta conexão. Aguarde {minutes} min antes de tentar novamente; a liberação depende do Instagram.", 429)
             if not self.dependency_check():
                 raise ApiError("O módulo de Instagram ainda não está instalado no servidor. Execute a instalação indicada no LEIA-ME.", 503)
             mode = payload.get("mode")
@@ -447,9 +378,6 @@ class RamosService:
                     kind = event.get("type")
                     if kind == "log":
                         self.log(session_id, event.get("tone"), event.get("message", ""), job["hidden"])
-                    elif kind == 'diagnostic':
-                        self.record_instagram_limit(event.get('data'))
-                        log_login_diagnostic(event.get('data'), 'worker')
                     elif kind == "input_required":
                         session["status"] = "awaiting_input"
                         session["challenge"] = {"id": str(uuid.uuid4()), "kind": event.get("kind", "code"), "message": str(event.get("message", "Informe o código solicitado."))[:300]}
@@ -945,7 +873,6 @@ def main():
     if os.environ.get("RAMOS_HOST", "127.0.0.1") not in {"127.0.0.1", "localhost", "::1"} and not (os.environ.get("RAMOS_API_KEY") or os.environ.get("RAMOS_ADMIN_PASSWORD")):
         raise RuntimeError("Configure RAMOS_ADMIN_PASSWORD para expor o painel com autenticação.")
     service = RamosService()
-    log_saved_login_diagnostics(service.directory)
     server = make_server(service, args.port)
     print(f"Ramos Bot: http://127.0.0.1:{server.server_address[1]}", flush=True)
     try:

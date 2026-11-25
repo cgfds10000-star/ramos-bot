@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import contextlib
-from email.utils import parsedate_to_datetime
 import io
 import json
 from pathlib import Path
 import sys
 import time
-import traceback
 from storage import read_json, write_json
 
 OUTPUT = sys.stdout
@@ -67,42 +65,7 @@ ERRORS = {
     "TwoFactorRequired": "A verificação não foi concluída. Confira o método de autenticação nas configurações.",
     "UserNotFound": "Perfil não encontrado.",
     "MediaNotFound": "Publicação não encontrada ou indisponível para esta conta.",
-    "ClientNeedsUpgradeError": "O Instagram recusou o perfil do aplicativo usado pelo servidor (needs_upgrade). O diagnóstico da etapa foi registrado.",
-    "ClientConnectionError": "O servidor não conseguiu estabelecer conexão com o Instagram. O diagnóstico foi registrado.",
-    "ClientRequestTimeout": "O Instagram não respondeu no tempo esperado. Aguarde antes de tentar novamente.",
-    "ClientThrottledError": "O Instagram limitou as requisições desta conexão (HTTP 429). A operação foi interrompida; aguarde antes de tentar novamente.",
-    "RateLimitError": "O Instagram limitou as requisições desta conexão. Aguarde antes de tentar novamente.",
-    "ProxyAddressIsBlocked": "O Instagram recusou a conexão utilizada pelo servidor. Confira o diagnóstico de acesso.",
-    "ClientJSONDecodeError": "O Instagram devolveu uma resposta que o módulo não conseguiu interpretar. O diagnóstico foi registrado.",
 }
-
-
-def failure_message(error, diagnostic):
-    name = type(error).__name__
-    if name in ERRORS:
-        return ERRORS[name]
-    status = diagnostic.get('http')
-    http = f', HTTP {status}' if type(status) is int and 100 <= status <= 599 else ''
-    if name in {'KeyError', 'TypeError', 'AttributeError', 'ValueError'}:
-        return f'Falha ao interpretar a resposta do Instagram ({name}{http}). O diagnóstico foi registrado.'
-    return f'O Instagram não concluiu esta etapa do login ({name}{http}). O diagnóstico foi registrado.'
-
-
-def rate_limit_delay(error, client):
-    response = getattr(error, 'response', None)
-    if response is None:
-        response = getattr(client, 'last_response', None)
-    if getattr(response, 'status_code', None) != 429 and type(error).__name__ not in {'ClientThrottledError', 'RateLimitError'}:
-        return None
-    raw = str((getattr(response, 'headers', None) or {}).get('Retry-After', '')).strip()
-    if raw.isdecimal() and len(raw) <= 8:
-        return max(1, int(raw))
-    try:
-        deadline = parsedate_to_datetime(raw).timestamp()
-        return max(1, int(deadline - time.time()) + 1)
-    except (ValueError, TypeError, OverflowError):
-        # Pausa local conservadora quando o provedor não informa um prazo.
-        return 900
 
 
 def run(payload):
@@ -118,7 +81,6 @@ def run(payload):
     session_path = directory / "session.json"
     client = None
     authenticated = False
-    failed_diagnostic = None
     password = payload.pop("password", "")
     try:
         # load_settings da biblioteca usa JSON puro; a sessão é descriptografada
@@ -197,19 +159,9 @@ def run(payload):
         name = type(error).__name__
         if name in {"LoginRequired", "ClientUnauthorizedError"}:
             authenticated = False
-        try:
-            failed_diagnostic = core.safe_diagnostic(client, 'recusado', error) if client is not None else {'excecao': name}
-        except Exception:
-            # O registro auxiliar nunca deve esconder a falha original.
-            failed_diagnostic = {'excecao': name}
-        failed_diagnostic['origem_erro'] = [{'arquivo': Path(frame.filename).name, 'linha': frame.lineno, 'funcao': frame.name} for frame in traceback.extract_tb(error.__traceback__)[-6:]]
-        delay = rate_limit_delay(error, client)
-        if delay is not None:
-            failed_diagnostic.update(retry_after_seconds=delay, rate_limit_until=time.time() + delay)
-        message = failure_message(error, failed_diagnostic)
+        message = ERRORS.get(name, "Não foi possível concluir a operação. Confira sua conexão e o estado da conta no Instagram.")
         if isinstance(error, core.FlowError):
             message = str(error)
-        emit('diagnostic', data=failed_diagnostic)
         emit("log", tone="error", message=message)
         emit("done", ok=False, authenticated=authenticated)
     finally:
@@ -218,7 +170,7 @@ def run(payload):
             client.password = None
             try:
                 core.save_client(client, session_path)
-                core.save_private_json(directory / "diagnostic.json", failed_diagnostic or core.safe_diagnostic(client, "autenticado" if authenticated else "recusado"))
+                core.save_private_json(directory / "diagnostic.json", core.safe_diagnostic(client, "autenticado" if authenticated else "recusado"))
             except OSError:
                 emit("log", tone="error", message="Não foi possível salvar a sessão no servidor.")
 
