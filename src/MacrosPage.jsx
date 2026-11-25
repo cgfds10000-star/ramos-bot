@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, Eye, EyeOff, KeyRound, Minus, Monitor, Play, Plus } from 'lucide-react';
+import { Check, Cloud, Eye, EyeOff, KeyRound, Minus, Monitor, Play, Plus } from 'lucide-react';
 
 const VIRALIZE_KEY_STORAGE = 'ramos.viralize.apiKey';
 const VIRALIZE_KEY_PATTERN = /^vzs_[A-Za-z0-9_-]{1,480}$/;
@@ -54,6 +54,17 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
     if (busy || !online || !items.length) return;
     setBusy(true);
     try {
+      if (action === 'start') {
+        try {
+          const ids = items.map(session => session.id);
+          setMessages(previous => ({...previous, ...Object.fromEntries(ids.map(id => [id, 'Iniciando no servidor…']))}));
+          await api.post('/viralize/start', {session_ids: ids, token: apiKey.trim(), type: taskType, limit: numericLimit});
+          setMessages(previous => ({...previous, ...Object.fromEntries(ids.map(id => [id, '']))}));
+        } catch (error) {
+          setMessages(previous => ({...previous, ...Object.fromEntries(items.map(session => [session.id, error.message || 'Não foi possível iniciar no servidor.']))}));
+        } finally {await refresh();}
+        return;
+      }
       for (const session of items) {
         try {
           const path = `/sessions/${session.id}/${action === 'stop' ? 'stop' : `viralize/${action}`}`;
@@ -100,7 +111,7 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
         </button>
       </div>
 
-      <p className="macro-flow-note">A chave fica salva somente neste navegador e só é enviada ao Viralize quando você vincula ou inicia uma rodada.</p>
+      <p className="macro-flow-note">A chave fica salva neste navegador. Ao vincular ou iniciar, o servidor a utiliza na integração com o Viralize.</p>
 
       <fieldset className="macro-sessions" disabled={busy || running}>
         <legend>Sessões para executar</legend>
@@ -141,7 +152,7 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
         <input type="number" min="1" max="500" step="1" inputMode="numeric" value={taskLimit} onChange={event => setTaskLimit(event.target.value)} disabled={busy || running} aria-describedby="macro-limit-help"/>
       </label>
       <button type="button" className="macro-start-button" disabled={!canStart} onClick={() => send('start', selected)}><Play aria-hidden="true"/>Iniciar</button>
-      <p id="macro-limit-help" className="macro-execution-note">Escolha quantas tarefas cada sessão pode executar nesta rodada. A rodada termina antes se a fila ficar vazia.</p>
+      <div id="macro-limit-help" className="macro-execution-note"><p>Escolha quantas tarefas cada sessão pode executar nesta rodada. A rodada termina antes se a fila ficar vazia.</p><p className="macro-server-note"><Cloud size={17} aria-hidden="true"/>Após iniciar, a execução continua no servidor mesmo com esta página fechada. Ao voltar, você acompanha o estado atual.</p></div>
       <ul className="macro-run-list" aria-live="polite">
         {sessions.filter(session => status[session.id] || messages[session.id]).map(session => {
           const run = status[session.id];

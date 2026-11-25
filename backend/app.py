@@ -21,9 +21,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import SimpleCookie, CookieError
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import Request
 import uuid
 from storage import read_json as storage_read, write_json
+from network import OutboundOpener, check_proxy_ip, normalize_proxy
 
 ROOT = Path(__file__).resolve().parent.parent
 USERNAME = re.compile(r"[A-Za-z0-9_.]{1,30}")
@@ -77,11 +78,6 @@ def private_json(path, value):
     write_json(path, value)
 
 
-class NoViralizeRedirect(HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
 def viralize_http_error(error):
     with error:
         status = error.code
@@ -110,10 +106,13 @@ def viralize_http_error(error):
 
 
 class ViralizeApi:
-    def __init__(self, token):
+    def __init__(self, token, proxy=''):
         self.token = token
-        self.opener = build_opener(NoViralizeRedirect())
+        self.opener = OutboundOpener(proxy)
         self.user_agent = os.environ.get("RAMOS_VIRALIZE_USER_AGENT", "Ramos-Bot/1.0")
+
+    def close(self):
+        self.opener.close()
 
     def request(self, endpoint, fields, *, write=False):
         base = "https://viralizesociais.com/api/" + endpoint
@@ -205,7 +204,7 @@ def viralize_step(task):
 
 
 class RamosService:
-    def __init__(self, directory=None, worker_command=None, dependency_check=None, viralize_api=ViralizeApi):
+    def __init__(self, directory=None, worker_command=None, dependency_check=None, viralize_api=ViralizeApi, proxy_checker=check_proxy_ip):
         self.directory = Path(directory or os.environ.get("RAMOS_DATA_DIR", ROOT / "data")).resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
@@ -214,6 +213,8 @@ class RamosService:
         self.dependency_check = dependency_check or (lambda: importlib.util.find_spec("instagrapi") is not None)
         self.jobs = {}
         self.viralize_api = viralize_api
+        self.proxy_checker = proxy_checker
+        self.proxy_check_running = False
         self.viralize_runs = {}
         self.logs = deque(maxlen=1000)
         self.sequence = 0
@@ -229,6 +230,12 @@ class RamosService:
         for session in self.data["sessions"]:
             session.update(status="disconnected", authenticated=False, challenge=None)
         self.data["settings"]["two_factor_method"] = "autenticador"
+        self.data['settings']['execution_mode'] = 'server'
+        initial_proxy = os.environ.get('RAMOS_INITIAL_PROXY', '')
+        if initial_proxy and not self.data.get('proxy_initialized_from_env'):
+            self.data['proxy'] = normalize_proxy(initial_proxy)
+            self.data['proxy_initialized_from_env'] = True
+            self.data.pop('proxy_check', None)
         if not self.data["sessions"]:
             self.data["sessions"].append(self.new_session())
         self.save()
@@ -240,6 +247,36 @@ class RamosService:
 
     def save(self):
         private_json(self.state_file, self.data)
+
+    def check_proxy(self):
+        with self.lock:
+            proxy = self.data.get('proxy', '')
+            if not proxy:
+                raise ApiError('Ative e salve o proxy antes de verificar o IP.')
+            if self.proxy_check_running:
+                raise ApiError('A verificação do proxy já está em andamento.', 409)
+            self.proxy_check_running = True
+        try:
+            ip = self.proxy_checker(proxy)
+            import ipaddress
+            ip = str(ipaddress.ip_address(ip))
+            check = {'status': 'ok', 'ip': ip, 'checked_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+        except Exception:
+            check = {'status': 'error', 'ip': None, 'checked_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                     'message': 'Não foi possível verificar o IP pelo proxy. Confira o endereço, a autenticação e a disponibilidade do serviço.'}
+        finally:
+            with self.lock:
+                self.proxy_check_running = False
+        with self.lock:
+            if self.data.get('proxy', '') != proxy:
+                raise ApiError('O proxy foi alterado durante a verificação. Verifique novamente.', 409)
+            self.data['proxy_check'] = check
+            self.save()
+        return {'ok': check['status'] == 'ok', 'check': check}
+
+    def new_viralize_client(self, token):
+        with self.lock:
+            return self.viralize_api(token, proxy=self.data.get('proxy', ''))
 
     def log(self, session_id, tone, message, hidden=()):
         text = str(message)
@@ -287,7 +324,11 @@ class RamosService:
             for account in data["accounts"]:
                 account["has_session"] = (self.directory / "accounts" / account["id"] / "session.json").is_file()
             parsed = urlsplit(data.pop("proxy", ""))
-            data["proxy"] = {"enabled": bool(parsed.hostname), "host": parsed.hostname or "", "port": parsed.port}
+            check = data.pop('proxy_check', None)
+            data.pop('proxy_initialized_from_env', None)
+            data["proxy"] = {"enabled": bool(parsed.hostname), "host": parsed.hostname or "", "port": parsed.port,
+                             'scheme': parsed.scheme, 'check': check if parsed.hostname else None,
+                             'checking': self.proxy_check_running}
             data["logs"] = list(self.logs)
             data["csrf"] = self.csrf
             data["engine_ready"] = bool(self.dependency_check())
@@ -494,8 +535,48 @@ class RamosService:
                 thread = threading.Thread(target=self.run_viralize, args=(session_id, run, token, fields, skip_offer, limit), daemon=True)
                 thread.start()
                 return {"ok": True}
-        self.viralize_api(token).request("account/ensure", fields, write=True)
+        api = self.new_viralize_client(token)
+        try:
+            api.request("account/ensure", fields, write=True)
+        finally:
+            api.close()
         return {"ok": True}
+
+    def start_viralize_batch(self, body):
+        ids = body.get('session_ids')
+        if not isinstance(ids, list) or not 1 <= len(ids) <= 20 or any(not isinstance(item, str) for item in ids) or len(set(ids)) != len(ids):
+            raise ApiError('Selecione de 1 a 20 sessões, sem repetições.')
+        token = body.get('token')
+        limit = body.get('limit', 50)
+        if not isinstance(token, str) or not re.fullmatch(r'vzs_[A-Za-z0-9_-]{1,480}', token):
+            raise ApiError('Informe um token do Viralize no formato vzs_…')
+        if type(limit) is not int or not 1 <= limit <= MAX_VIRALIZE_TASKS_PER_ROUND:
+            raise ApiError(f'O limite da rodada precisa estar entre 1 e {MAX_VIRALIZE_TASKS_PER_ROUND}.')
+        if body.get('type', 'follow') not in ('follow', 'like', 'follow,like'):
+            raise ApiError('Selecione tarefas de seguir ou curtir.')
+        with self.lock:
+            accounts = set()
+            for session_id in ids:
+                session = self.session(session_id)
+                previous = self.viralize_runs.get(session_id)
+                if not session.get('authenticated'):
+                    raise ApiError('Conecte todas as sessões selecionadas antes de iniciar.', 409)
+                if session_id in self.jobs or (previous and previous['status'] == 'running'):
+                    raise ApiError('Uma das sessões selecionadas já está em execução.', 409)
+                account_id = self.account(session['account_id'])['id']
+                if account_id in accounts:
+                    raise ApiError('A mesma conta não pode executar em duas sessões.', 409)
+                accounts.add(account_id)
+            started = []
+            try:
+                for session_id in ids:
+                    self.viralize_action(session_id, 'start', body)
+                    started.append(session_id)
+            except Exception:
+                for session_id in started:
+                    self.viralize_runs[session_id].update(stop=True, status='stopped', message='O início do grupo foi interrompido.')
+                raise ApiError('Não foi possível iniciar o grupo de sessões.', 503) from None
+        return {'ok': True, 'execution_mode': 'server', 'session_ids': ids}
 
     def viralize_update(self, session_id, run, status, message, can_skip=False):
         with self.lock:
@@ -515,8 +596,9 @@ class RamosService:
             self.viralize_update(session_id, run, status, message, can_skip)
 
         completed_count = 0
+        api = None
         try:
-            api = self.viralize_api(token)
+            api = self.new_viralize_client(token)
             while completed_count < max_tasks:
                 with self.lock:
                     self.viralize_require_current(session_id, run)
@@ -583,8 +665,15 @@ class RamosService:
             update("stopped" if run["stop"] else "error", str(error))
         except Exception:
             update("error", "A rodada não foi concluída. Confira a fila no Viralize antes de repetir.")
+        finally:
+            if api is not None:
+                api.close()
 
     def mutate(self, method, route, body):
+        if route == ['viralize', 'start'] and method == 'POST':
+            return self.start_viralize_batch(body)
+        if route == ['proxy', 'test'] and method == 'POST':
+            return self.check_proxy()
         if method == "POST" and len(route) == 4 and route[0] == "sessions" and route[2] == "viralize" and route[3] in {"link", "start", "skip"}:
             return self.viralize_action(route[1], route[3], body)
         with self.lock:
@@ -636,7 +725,7 @@ class RamosService:
                 session_file = self.directory / "accounts" / account["id"] / "session.json"
                 session_file.unlink(missing_ok=True)
             elif route == ["proxy"] and method == "POST":
-                if self.jobs:
+                if self.jobs or any(run['status'] == 'running' for run in self.viralize_runs.values()):
                     raise ApiError("Aguarde ou encerre as operações antes de alterar o proxy.", 409)
                 value = str(body.get("url", "")).strip()
                 if body.get("enabled") and not value:
@@ -644,22 +733,22 @@ class RamosService:
                     if not value:
                         raise ApiError("Informe o endereço do proxy.")
                 if value and body.get("enabled"):
-                    parsed = urlsplit(value)
                     try:
-                        valid = parsed.scheme in {"http", "https", "socks5", "socks5h"} and parsed.hostname and parsed.port and parsed.path in {"", "/"} and not parsed.query and not parsed.fragment
+                        value = normalize_proxy(value)
                     except ValueError:
-                        valid = False
-                    if not valid or len(value) > 1000:
-                        raise ApiError("Use http://host:porta ou socks5://host:porta.")
+                        raise ApiError('Use host:porta:usuário:senha ou uma URL de proxy válida.') from None
+                self.data.pop('proxy_check', None)
                 self.data["proxy"] = value if body.get("enabled") else ""
                 for session in self.data["sessions"]:
                     session.update(authenticated=False, status="disconnected", challenge=None)
-                self.log(None, "info", "Proxy atualizado. Reconecte as contas para aplicar a configuração.")
+                self.log(None, "info", "Conexão de saída atualizada para Instagram e Viralize. Reconecte as contas.")
             elif route == ["settings"] and method == "POST":
                 value = body.get("two_factor_method")
                 if value != "autenticador":
                     raise ApiError("Método de autenticação inválido.")
-                self.data["settings"] = {"two_factor_method": value}
+                if body.get('execution_mode', 'server') != 'server':
+                    raise ApiError('O modo de execução suportado é no servidor.')
+                self.data["settings"] = {"two_factor_method": value, 'execution_mode': 'server'}
             elif route == ["macros"] and method == "POST":
                 name = str(body.get("name", "")).strip()
                 steps = body.get("steps")
@@ -873,6 +962,14 @@ def main():
     if os.environ.get("RAMOS_HOST", "127.0.0.1") not in {"127.0.0.1", "localhost", "::1"} and not (os.environ.get("RAMOS_API_KEY") or os.environ.get("RAMOS_ADMIN_PASSWORD")):
         raise RuntimeError("Configure RAMOS_ADMIN_PASSWORD para expor o painel com autenticação.")
     service = RamosService()
+    if service.data.get('proxy'):
+        def check_initial_proxy():
+            try:
+                result = service.check_proxy()
+            except ApiError:
+                return
+            print(json.dumps({'event': 'ramos_proxy_check', **result['check']}, ensure_ascii=False), flush=True)
+        threading.Thread(target=check_initial_proxy, daemon=True).start()
     server = make_server(service, args.port)
     print(f"Ramos Bot: http://127.0.0.1:{server.server_address[1]}", flush=True)
     try:

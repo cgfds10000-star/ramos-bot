@@ -97,13 +97,16 @@ print(json.dumps({{"type": "done", "ok": True, "authenticated": True}}), flush=T
         calls = []
 
         class MockViralize:
+            def close(self):
+                pass
+
             def request(self, endpoint, fields, *, write=False):
                 calls.append((endpoint, fields, write))
                 if endpoint == 'task':
                     return queues.pop(0) if queues else {'state': 'empty'}
                 return {'success': True, 'completion_id': 84}
 
-        self.service.viralize_api = lambda token: MockViralize()
+        self.service.viralize_api = lambda token, **kwargs: MockViralize()
         return calls
 
     def viralize(self, action):
@@ -161,6 +164,54 @@ print(json.dumps({{"type": "done", "ok": True, "authenticated": True}}), flush=T
         self.viralize('start')
         self.viralize_result('empty')
         self.assertEqual([call[0] for call in calls], ['task'])
+
+    def test_batch_checks_every_session_before_starting_any_operation(self):
+        calls = self.viralize_fixture({'state': 'empty'})
+        disconnected = self.service.mutate('POST', ['sessions'], {})['session_id']
+        with self.assertRaises(ApiError) as caught:
+            self.service.mutate('POST', ['viralize', 'start'], {'session_ids': [self.session, disconnected], 'token': 'vzs_synthetic'})
+        self.assertEqual(caught.exception.status, 409)
+        self.assertEqual(calls, [])
+        self.assertEqual(self.service.viralize_runs, {})
+
+    def test_server_batch_finishes_after_http_client_disconnects(self):
+        self.viralize_fixture({'state': 'empty'})
+        second = self.service.mutate('POST', ['sessions'], {})['session_id']
+        account = self.service.add_account('segundaconta')
+        self.service.session(second).update(account_id=account['id'], authenticated=True, status='connected')
+        release = threading.Event()
+        calls = []
+        class SlowApi:
+            def close(self): pass
+            def request(self, endpoint, fields, **kwargs):
+                calls.append(fields['username'])
+                release.wait(3)
+                return {'state': 'empty'}
+        self.service.viralize_api = lambda token, **kwargs: SlowApi()
+        server = make_server(self.service, 0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=3)
+        try:
+            body = json.dumps({'session_ids': [self.session, second], 'token': 'vzs_synthetic', 'limit': 2})
+            connection.request('POST', '/api/viralize/start', body, {'Content-Type': 'application/json', 'X-Ramos-CSRF': self.service.csrf})
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(json.loads(response.read())['execution_mode'], 'server')
+            connection.close()
+            self.wait(lambda: len(calls) == 2)
+            self.assertEqual(self.service.snapshot()['settings']['execution_mode'], 'server')
+            self.assertEqual(len(self.service.snapshot()['viralize']), 2)
+            release.set()
+            self.wait(lambda: all(run['status'] == 'empty' for run in self.service.viralize_runs.values()))
+            reopened = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=3)
+            reopened.request('GET', '/api/state')
+            snapshot = json.loads(reopened.getresponse().read())
+            reopened.close()
+            self.assertEqual([run['status'] for run in snapshot['viralize'].values()], ['empty', 'empty'])
+            self.assertNotIn('vzs_synthetic', json.dumps(snapshot))
+        finally:
+            release.set(); connection.close(); server.shutdown(); server.server_close(); thread.join(timeout=2)
 
     def test_viralize_token_is_only_in_bearer_header(self):
         service = ViralizeApi('vzs_synthetic')

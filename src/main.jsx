@@ -5,11 +5,13 @@ import { RamosApi, parseCommand, selectSession, sessionBusy, statusLabel } from 
 import VerificationForm from './VerificationForm.jsx';
 import MacrosPage from './MacrosPage.jsx';
 import LogsPage from './LogsPage.jsx';
+import ProxyPage from './ProxyPage.jsx';
 import './styles.css';
 import './reference.css';
 import './macros.css';
 import './logs.css';
 import './app-layout.css';
+import './proxy.css';
 
 const api = new RamosApi();
 const empty = { sessions: [], accounts: [], macros: [], logs: [], proxy: { enabled: false }, settings: { two_factor_method: 'autenticador' } };
@@ -39,8 +41,6 @@ function App() {
   const [visiblePassword, setVisiblePassword] = useState(false);
   const [command, setCommand] = useState('');
   const [localLogs, setLocalLogs] = useState([]);
-  const [proxyUrl, setProxyUrl] = useState('');
-  const [proxyEnabled, setProxyEnabled] = useState(false);
   const [macroName, setMacroName] = useState('');
   const [macroText, setMacroText] = useState('');
   const [newAccount, setNewAccount] = useState('');
@@ -155,7 +155,6 @@ function App() {
 
   function openPanel(value) {
     setError('');
-    if (value === 'proxy') { setProxyEnabled(state.proxy.enabled); setProxyUrl(''); }
     if (value === 'settings') setTwoFactor(state.settings.two_factor_method);
     if (['macros', 'logs', 'proxy', 'settings'].includes(value)) { setPage(value); setPanel(null); return; }
     setPanel(value);
@@ -212,8 +211,7 @@ function App() {
   }
 
   const toolForms = {
-    proxy: <form className="panel-form" onSubmit={async event => { event.preventDefault(); const result = await act(() => api.post('/proxy', { enabled: proxyEnabled, url: proxyUrl }), 'Proxy atualizado.'); if (result) { setProxyUrl(''); setPanel(null); } }}><p className="panel-intro">Use a mesma conexão nas contas desta instalação. Alterar o proxy desconecta as sessões.</p><label className="toggle-row"><span>Usar proxy<small>{state.proxy.enabled ? `${state.proxy.host}:${state.proxy.port}` : 'Conexão direta'}</small></span><input type="checkbox" role="switch" checked={proxyEnabled} onChange={event => setProxyEnabled(event.target.checked)}/></label>{proxyEnabled && <label>Endereço do proxy<input type="password" autoComplete="off" value={proxyUrl} onChange={event => setProxyUrl(event.target.value)} placeholder={state.proxy.enabled ? 'Deixe vazio para manter o atual' : 'http://usuario:senha@host:porta'} maxLength={1000}/></label>}<button className="primary-button" disabled={!online || pending || busy}><ShieldCheck size={17}/>Salvar proxy</button></form>,
-    settings: <form className="panel-form" onSubmit={async event => { event.preventDefault(); const result = await act(() => api.post('/settings', { two_factor_method: twoFactor }), 'Configurações salvas.'); if (result) setPanel(null); }}><label>Verificação em duas etapas<select value={twoFactor} onChange={event => setTwoFactor(event.target.value)}><option value="autenticador">Aplicativo autenticador (TOTP)</option></select></label><p className="panel-intro">O login utiliza o código do aplicativo autenticador quando o Instagram fornece o contexto 2FA. Códigos são informados por você e usados uma única vez.</p><div className="setting-info"><span>Servidor</span><strong>{online ? 'Conectado' : 'Offline'}</strong></div><div className="setting-info"><span>Módulo Instagram</span><strong>{state.engine_ready ? 'Instalado' : 'Aguardando instalação'}</strong></div><button className="primary-button" disabled={!online || pending}><Settings2 size={17}/>Salvar configurações</button></form>,
+    settings: <form className="panel-form" onSubmit={async event => { event.preventDefault(); const result = await act(() => api.post('/settings', { two_factor_method: twoFactor, execution_mode: 'server' }), 'Configurações salvas.'); if (result) setPanel(null); }}><div className="server-execution-setting"><span className="server-setting-title"><Radio size={22}/><strong>Execução no servidor</strong><span>Ativa</span></span><p>Depois de iniciar, suas sessões continuam no servidor se você ficar sem internet ou fechar o site.</p><p>Ao voltar, acompanhe o andamento e use Interromper para parar. A execução termina ao atingir o limite, esvaziar a fila ou encontrar um erro.</p></div><label>Verificação em duas etapas<select value={twoFactor} onChange={event => setTwoFactor(event.target.value)}><option value="autenticador">Aplicativo autenticador (TOTP)</option></select></label><p className="panel-intro">O login utiliza o código do aplicativo autenticador quando o Instagram fornece o contexto 2FA. Códigos são informados por você e usados uma única vez.</p><div className="setting-info"><span>Servidor</span><strong>{online ? 'Conectado' : 'Offline'}</strong></div><div className="setting-info"><span>Módulo Instagram</span><strong>{state.engine_ready ? 'Instalado' : 'Aguardando instalação'}</strong></div><button className="primary-button" disabled={!online || pending}><Settings2 size={17}/>Salvar configurações</button></form>,
   };
 
   const title = { accounts: 'Contas abertas', proxy: 'Proxy', 'command-macros': 'Sequências de comandos', logs: 'Logs', settings: 'Configurações', help: 'Comandos do terminal', menu: 'Sua sessão', delete: 'Remover sessão?' }[panel];
@@ -229,7 +227,7 @@ function App() {
       </div>
     </header>
 
-    {page === 'macros' ? <MacrosPage sessions={state.sessions} api={api} refresh={refresh} status={state.viralize || {}} online={online} selectedIds={macroSelection} onSelectionChange={setMacroSelection}/> : page === 'logs' ? <LogsPage logs={state.logs} sessions={state.sessions} online={online} checking={checking} onExport={exportLogs}/> : ['proxy', 'settings'].includes(page) ? <main className="tool-page" aria-label={page === 'proxy' ? 'Proxy' : 'Configurações'}><section className="tool-page-card"><div className="tool-page-heading">{page === 'proxy' ? <ShieldCheck aria-hidden="true"/> : <Settings aria-hidden="true"/>}<h1>{page === 'proxy' ? 'Proxy' : 'Configurações'}</h1></div>{toolForms[page]}{error && <div className="error-banner" role="alert">{error}</div>}</section></main> : <main>
+    {page === 'macros' ? <MacrosPage sessions={state.sessions} api={api} refresh={refresh} status={state.viralize || {}} online={online} selectedIds={macroSelection} onSelectionChange={setMacroSelection}/> : page === 'logs' ? <LogsPage logs={state.logs} sessions={state.sessions} online={online} checking={checking} onExport={exportLogs}/> : page === 'proxy' ? <ProxyPage api={api} proxy={state.proxy} online={online} busy={state.sessions.some(sessionBusy) || Object.values(state.viralize || {}).some(run => run.status === 'running')} refresh={refresh}/> : page === 'settings' ? <main className="tool-page" aria-label={page === 'proxy' ? 'Proxy' : 'Configurações'}><section className="tool-page-card"><div className="tool-page-heading">{page === 'proxy' ? <ShieldCheck aria-hidden="true"/> : <Settings aria-hidden="true"/>}<h1>{page === 'proxy' ? 'Proxy' : 'Configurações'}</h1></div>{toolForms[page]}{error && <div className="error-banner" role="alert">{error}</div>}</section></main> : <main>
       <section className="welcome"><h1>Bem-vindo, <span>Carlos</span></h1><p>Gerencie suas sessões, contas, proxy e macros.</p></section>
       <section className="stats" aria-label="Resumo do Ramos Bot">
         <button onClick={() => setWorkspaceOpen(false)}><Monitor/><span>Sessões</span><strong>{state.sessions.length}</strong></button>

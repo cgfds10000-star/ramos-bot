@@ -64,3 +64,15 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 Monte um volume persistente em `/data`. A chave de criptografia precisa permanecer a mesma entre reinicializações. Com a chave configurada, os dados e sessões são gravados com Fernet. No uso local sem chave, os arquivos ficam privados na pasta `data`; senhas e códigos não são gravados em disco. A remoção de uma conta apaga a sessão salva. Logs ficam em memória e podem ser exportados antes de reiniciar.
 
 `RAMOS_API_KEY` é uma alternativa para acesso por proxy privado. Nunca coloque segredos em variáveis `VITE_*`, no código React ou no repositório.
+
+## Proxy das sessões
+
+A aba Proxy salva uma conexão única para Instagram (login, 2FA, API privada, pública e GraphQL) e Viralize. Aceita URLs HTTP/HTTPS/SOCKS5 e o formato `host:porta:usuario:senha`. SOCKS5 usa DNS remoto. As credenciais ficam no servidor e não retornam ao navegador. Ativar, trocar ou desativar o proxy desconecta as sessões; operações em andamento precisam terminar primeiro.
+
+“Salvar e aplicar” verifica o IP pelo servidor usando HTTPS com ipify. “Verificar conexão” repete somente essa verificação. O IP exibido é o último observado, com data e hora; proxies rotativos podem mudar o IP entre conexões. Falhas do proxy encerram a chamada, sem repetir diretamente. A comunicação do navegador com o painel continua usando HTTPS normalmente.
+
+`RAMOS_INITIAL_PROXY` permite configurar o proxy inicial em uma variável protegida do servidor. Ele é importado uma única vez; alterações posteriores na aba persistem após reinícios. Não versione essa variável nem coloque credenciais no React.
+
+## Execução no servidor
+
+Configurações informa o modo `server`: todas as sessões selecionadas são enviadas ao servidor juntas ao tocar em Iniciar. Os processos e a fila continuam após a resposta HTTP e independem do navegador. Fechar a página ou perder a internet do celular não interrompe a rodada aceita pelo servidor. Ao reabrir o painel, o estado atual volta por `/api/state`. Interromper, atingir o limite, fila vazia ou erro continuam encerrando a rodada. O servidor precisa permanecer em execução; esta opção não reinicia tarefas automaticamente após um reinício ou deploy do serviço e não reenvia ações de resultado incerto.

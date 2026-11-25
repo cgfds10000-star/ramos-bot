@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import time
 from storage import read_json, write_json
+from network import apply_instagram_proxy
 
 OUTPUT = sys.stdout
 
@@ -92,8 +93,7 @@ def run(payload):
             client._local_login_username = settings.get("_local_login_username")
         client.challenge_code_handler = core.read_verification_code
         client.two_factor_method = "autenticador"
-        if payload.get("proxy"):
-            client.set_proxy(payload["proxy"])
+        apply_instagram_proxy(client, payload.get("proxy", ""))
         handle = core.valid_username(payload["username"])
         owner = getattr(client, "_local_login_username", None)
         if owner and owner.casefold() != handle.casefold():
