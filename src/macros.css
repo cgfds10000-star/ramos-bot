@@ -79,3 +79,5 @@
 .macro-execution-note>svg{width:100%;height:auto;stroke-width:1.8;color:#dfa1f6;filter:drop-shadow(0 0 5px #b74bdf55)}
 .macro-execution-note>p{margin:0;padding-left:clamp(12px,calc(28 * var(--m)),28px);border-left:1px solid #84538f}
 .macro-execution-card :is(select,input,.macro-start-button):focus-visible{outline:2px solid #f1cfff;outline-offset:3px}
+
+.macro-run-status.is-waiting,.macro-run-status.is-recovering{border-color:#ad76d7;color:#e9caff;background:#6c31972b}

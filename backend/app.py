@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import signal
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,8 @@ USERNAME = re.compile(r"[A-Za-z0-9_.]{1,30}")
 COMMANDS = {"buscar", "perfil", "seguir", "curtir"}
 BUSY = {"connecting", "running", "awaiting_input"}
 MAX_VIRALIZE_TASKS_PER_ROUND = 500
+ACTIVE_RUNS = {'running', 'waiting', 'recovering'}
+SAFE_RESUME_PHASES = {'polling', 'waiting', 'between_rounds', 'recovering_session'}
 
 
 class ApiError(Exception):
@@ -216,9 +219,20 @@ class RamosService:
         self.proxy_checker = proxy_checker
         self.proxy_check_running = False
         self.viralize_runs = {}
+        self.run_threads = {}
+        self.shutting_down = False
+        self.runs_resumed = False
+        self.queue_poll_seconds = 30
         self.logs = deque(maxlen=1000)
         self.sequence = 0
         self.state_file = self.directory / "state.json"
+        self.run_file = self.directory / 'executions.json'
+        try:
+            self.saved_runs = storage_read(self.run_file)
+        except FileNotFoundError:
+            self.saved_runs = {}
+        if not isinstance(self.saved_runs, dict):
+            raise RuntimeError('Formato de execuções salvas não reconhecido.')
         try:
             self.data = storage_read(self.state_file)
         except FileNotFoundError:
@@ -231,6 +245,7 @@ class RamosService:
             session.update(status="disconnected", authenticated=False, challenge=None)
         self.data["settings"]["two_factor_method"] = "autenticador"
         self.data['settings']['execution_mode'] = 'server'
+        self.data['settings'].setdefault('continuous_execution', True)
         initial_proxy = os.environ.get('RAMOS_INITIAL_PROXY', '')
         if initial_proxy and not self.data.get('proxy_initialized_from_env'):
             self.data['proxy'] = normalize_proxy(initial_proxy)
@@ -238,6 +253,14 @@ class RamosService:
             self.data.pop('proxy_check', None)
         if not self.data["sessions"]:
             self.data["sessions"].append(self.new_session())
+        for session_id, plan in self.saved_runs.items():
+            if not isinstance(plan, dict) or not any(item['id'] == session_id for item in self.data['sessions']):
+                continue
+            run = {key: plan.get(key) for key in ('account_id', 'type', 'limit', 'continuous', 'phase', 'completed_count', 'completed_total', 'round', 'next_check_at', 'offer', 'can_skip')}
+            run.update(status='recovering' if plan.get('desired') else plan.get('status', 'stopped'),
+                       message='Restaurando execução salva no servidor…' if plan.get('desired') else plan.get('message', 'Execução encerrada.'),
+                       stop=False, stop_event=threading.Event())
+            self.viralize_runs[session_id] = run
         self.save()
         self.log(None, "info", "Ramos Bot iniciado. Selecione uma sessão para conectar sua conta.")
 
@@ -247,6 +270,65 @@ class RamosService:
 
     def save(self):
         private_json(self.state_file, self.data)
+
+    def checkpoint_run(self, session_id, run, token=None):
+        if self.shutting_down or self.viralize_runs.get(session_id) is not run:
+            return
+        plan = self.saved_runs.setdefault(session_id, {})
+        for key in ('account_id', 'type', 'limit', 'continuous', 'phase', 'completed_count', 'completed_total', 'round', 'next_check_at', 'offer', 'can_skip', 'status', 'message'):
+            if key in run:
+                plan[key] = run[key]
+        plan['desired'] = run['status'] in ACTIVE_RUNS and not run['stop']
+        if token is not None:
+            plan['token'] = token
+        if not plan['desired']:
+            plan.pop('token', None)
+        private_json(self.run_file, self.saved_runs)
+
+    def resume_runs(self):
+        with self.lock:
+            if self.runs_resumed:
+                return
+            self.runs_resumed = True
+            for session_id, run in list(self.viralize_runs.items()):
+                plan = self.saved_runs.get(session_id, {})
+                if not plan.get('desired'):
+                    continue
+                if run.get('phase') not in SAFE_RESUME_PHASES:
+                    self.viralize_update(session_id, run, 'attention', 'O servidor reiniciou durante uma ação. Confira o resultado antes de continuar; ela não será repetida.')
+                    continue
+                token = plan.get('token')
+                if not isinstance(token, str) or not re.fullmatch(r'vzs_[A-Za-z0-9_-]{1,480}', token):
+                    self.viralize_update(session_id, run, 'attention', 'Informe a chave da API e inicie a execução novamente.')
+                    continue
+                thread = threading.Thread(target=self.restore_run, args=(session_id, run, token), daemon=True)
+                self.run_threads[session_id] = thread
+                thread.start()
+
+    def restore_run(self, session_id, run, token):
+        try:
+            with self.lock:
+                session = self.session(session_id)
+                if run['stop'] or session.get('account_id') != run['account_id']:
+                    raise ApiError('A conta da sessão mudou. Inicie novamente.', 409)
+                account = self.account(run['account_id'])
+                self.viralize_update(session_id, run, 'recovering', 'Validando a sessão salva para retomar no servidor…')
+                self.start(session_id, {'mode': 'login', 'username': account['username']}, viralize_run=run)
+                job = self.jobs[session_id]
+            if not job['finished'].wait(610) or not job['success']:
+                raise ApiError('A sessão salva precisa ser reconectada. A execução ficou pausada.', 409)
+            with self.lock:
+                self.viralize_require_current(session_id, run)
+                fields = {'social': 'instagram', 'username': account['username']}
+            self.run_viralize(session_id, run, token, fields, None, run['limit'])
+        except ApiError as error:
+            self.viralize_update(session_id, run, 'stopped' if run['stop'] else 'attention', str(error))
+        except Exception:
+            self.viralize_update(session_id, run, 'error', 'Não foi possível restaurar a execução salva. Reconecte a sessão.')
+        finally:
+            with self.lock:
+                if self.run_threads.get(session_id) is threading.current_thread():
+                    self.run_threads.pop(session_id, None)
 
     def check_proxy(self):
         with self.lock:
@@ -319,7 +401,9 @@ class RamosService:
             data = json.loads(json.dumps(self.data))
             data.pop("viralize_attempts", None)
             data["viralize"] = {session_id: {
-                "status": run["status"], "message": run["message"], "can_skip": run["can_skip"]
+                "status": run["status"], "message": run["message"], "can_skip": run["can_skip"],
+                'completed_total': run.get('completed_total', 0), 'round': run.get('round', 1),
+                'continuous': bool(run.get('continuous')), 'next_check_at': run.get('next_check_at')
             } for session_id, run in self.viralize_runs.items()}
             for account in data["accounts"]:
                 account["has_session"] = (self.directory / "accounts" / account["id"] / "session.json").is_file()
@@ -339,7 +423,7 @@ class RamosService:
         with self.lock:
             session = self.session(session_id)
             run = self.viralize_runs.get(session_id)
-            if run and run["status"] == "running" and run is not viralize_run:
+            if run and run["status"] in ACTIVE_RUNS and run is not viralize_run:
                 raise ApiError("A rodada do Viralize ainda está em andamento nesta sessão.", 409)
             if session_id in self.jobs:
                 raise ApiError("Essa sessão já está executando uma operação.", 409)
@@ -464,8 +548,11 @@ class RamosService:
             if expected is not None and job is not expected:
                 return
             run = self.viralize_runs.get(session_id)
-            if run and run["status"] == "running":
+            if run and run["status"] in ACTIVE_RUNS:
                 run["stop"] = True
+                if run.get('stop_event'):
+                    run['stop_event'].set()
+                self.viralize_update(session_id, run, 'stopped', 'Execução interrompida pelo usuário.')
             self.jobs.pop(session_id, None)
             if job:
                 job["cancelled"] = True
@@ -515,7 +602,7 @@ class RamosService:
             if not session.get("authenticated"):
                 raise ApiError("Conecte a conta do Instagram nesta sessão antes de usar o Viralize.", 409)
             previous = self.viralize_runs.get(session_id)
-            if session_id in self.jobs or (previous and previous["status"] == "running"):
+            if session_id in self.jobs or (previous and previous["status"] in ACTIVE_RUNS):
                 raise ApiError("Já há uma operação em andamento nesta sessão.", 409)
             account = self.account(session["account_id"])
             fields = {"social": "instagram", "username": account["username"]}
@@ -529,11 +616,20 @@ class RamosService:
                         raise ApiError("Não há uma tarefa selecionada para pular.", 409)
                     skip_offer, task_type = previous["offer"], previous["type"]
                 run = {"account_id": account["id"], "type": task_type, "status": "running", "stop": False,
-                       "message": "Consultando a fila do Viralize…", "can_skip": False, "offer": None}
+                       "message": "Consultando a fila do Viralize…", "can_skip": False, "offer": None,
+                       'stop_event': threading.Event(), 'phase': 'polling', 'limit': limit,
+                       'continuous': action == 'start' and self.data['settings']['continuous_execution'],
+                       'completed_count': 0, 'completed_total': 0, 'round': 1, 'next_check_at': None}
                 self.viralize_runs[session_id] = run
+                self.checkpoint_run(session_id, run, token)
                 self.log(session_id, "info", run["message"])
                 thread = threading.Thread(target=self.run_viralize, args=(session_id, run, token, fields, skip_offer, limit), daemon=True)
-                thread.start()
+                self.run_threads[session_id] = thread
+                try:
+                    thread.start()
+                except RuntimeError:
+                    self.viralize_update(session_id, run, 'error', 'Não foi possível iniciar o executor no servidor.')
+                    raise
                 return {"ok": True}
         api = self.new_viralize_client(token)
         try:
@@ -561,7 +657,7 @@ class RamosService:
                 previous = self.viralize_runs.get(session_id)
                 if not session.get('authenticated'):
                     raise ApiError('Conecte todas as sessões selecionadas antes de iniciar.', 409)
-                if session_id in self.jobs or (previous and previous['status'] == 'running'):
+                if session_id in self.jobs or (previous and previous['status'] in ACTIVE_RUNS):
                     raise ApiError('Uma das sessões selecionadas já está em execução.', 409)
                 account_id = self.account(session['account_id'])['id']
                 if account_id in accounts:
@@ -574,40 +670,77 @@ class RamosService:
                     started.append(session_id)
             except Exception:
                 for session_id in started:
-                    self.viralize_runs[session_id].update(stop=True, status='stopped', message='O início do grupo foi interrompido.')
+                    run = self.viralize_runs[session_id]
+                    run['stop'] = True
+                    run['stop_event'].set()
+                    self.viralize_update(session_id, run, 'stopped', 'O início do grupo foi interrompido.')
                 raise ApiError('Não foi possível iniciar o grupo de sessões.', 503) from None
         return {'ok': True, 'execution_mode': 'server', 'session_ids': ids}
 
-    def viralize_update(self, session_id, run, status, message, can_skip=False):
+    def viralize_update(self, session_id, run, status, message, can_skip=False, phase=None):
         with self.lock:
+            if self.shutting_down or self.viralize_runs.get(session_id) is not run:
+                return
             run.update(status=status, message=message, can_skip=can_skip)
+            if phase is not None:
+                run['phase'] = phase
+            self.checkpoint_run(session_id, run)
             if self.viralize_runs.get(session_id) is run:
                 self.log(session_id, "error" if status == "error" else "info", message)
+                if os.environ.get('RAILWAY_SERVICE_ID'):
+                    print(json.dumps({'event': 'ramos_execution_state', 'session_id': session_id,
+                                      'status': status, 'phase': run.get('phase'),
+                                      'completed_total': run.get('completed_total', 0)}), flush=True)
 
     def viralize_require_current(self, session_id, run):
-        if run["stop"] or self.viralize_runs.get(session_id) is not run:
+        if self.shutting_down or run["stop"] or self.viralize_runs.get(session_id) is not run:
             raise ApiError("A rodada foi interrompida.", 409)
         session = self.session(session_id)
         if not session.get("authenticated") or session.get("account_id") != run["account_id"]:
             raise ApiError("A conta da sessão mudou. Nenhuma ação adicional será enviada.", 409)
 
     def run_viralize(self, session_id, run, token, fields, skip_offer, max_tasks):
-        def update(status, message, can_skip=False):
-            self.viralize_update(session_id, run, status, message, can_skip)
+        def update(status, message, can_skip=False, phase=None):
+            self.viralize_update(session_id, run, status, message, can_skip, phase)
 
-        completed_count = 0
+        def wait_for_queue(message, phase='waiting'):
+            with self.lock:
+                self.viralize_require_current(session_id, run)
+                run['next_check_at'] = time.time() + self.queue_poll_seconds
+                update('waiting', message, phase=phase)
+            run['stop_event'].wait(self.queue_poll_seconds)
+            with self.lock:
+                self.viralize_require_current(session_id, run)
+                run['next_check_at'] = None
+
+        completed_count = run.get('completed_count', 0)
         api = None
         try:
             api = self.new_viralize_client(token)
-            while completed_count < max_tasks:
+            remaining_wait = max(0, (run.get('next_check_at') or 0) - time.time())
+            if remaining_wait:
+                update('waiting', 'Aguardando a próxima consulta no servidor…', phase='waiting')
+                run['stop_event'].wait(remaining_wait)
+            while True:
                 with self.lock:
                     self.viralize_require_current(session_id, run)
-                update("running", "Consultando a fila do Viralize…" if completed_count == 0 else f"Tarefa {completed_count} concluída. Buscando a próxima…")
+                if completed_count >= max_tasks:
+                    if not run.get('continuous'):
+                        update('done', f'Rodada encerrada após o limite escolhido de {max_tasks} tarefa(s).')
+                        return
+                    completed_count = 0
+                    run['completed_count'] = 0
+                    run['round'] += 1
+                    wait_for_queue('Rodada concluída. O servidor aguardará antes de iniciar a próxima.', 'between_rounds')
+                update("running", "Consultando a fila do Viralize…" if completed_count == 0 else f"Tarefa {completed_count} concluída. Buscando a próxima…", phase='polling')
                 queue = api.request("task", {**fields, "type": run["type"]})
                 with self.lock:
                     self.viralize_require_current(session_id, run)
                 offer, task = viralize_offer(queue)
                 if offer is None:
+                    if run.get('continuous'):
+                        wait_for_queue('Fila vazia. Executor ativo no servidor, aguardando novas tarefas…')
+                        continue
                     message = "Fila vazia. Inicie outra rodada quando quiser consultar de novo." if completed_count == 0 else f"Rodada concluída: {completed_count} tarefa(s) enviada(s) para análise."
                     update("empty", message)
                     return
@@ -620,6 +753,9 @@ class RamosService:
                     update("done", "Tarefa pulada no Viralize.")
                     return
                 if offer.get("completion_state", "pending") != "pending":
+                    if run.get('continuous') and offer.get('completion_state') == 'confirming':
+                        wait_for_queue('Aguardando a análise da ação anterior. Nenhuma ação será repetida.')
+                        continue
                     update("attention", "A ação existente não está pendente. Não foi executada novamente.")
                     return
                 step = viralize_step(task)
@@ -631,7 +767,7 @@ class RamosService:
                     if not self.dependency_check():
                         raise ApiError("O módulo Python do Instagram ainda não está instalado.", 503)
                 if offer["state"] == "available":
-                    update("running", "Aceitando a tarefa no Viralize…")
+                    update("running", "Aceitando a tarefa no Viralize…", phase='accepting')
                     accepted = api.request("task/accept", {**fields, "task_id": offer["task_id"], "is_refill": offer["is_refill"]}, write=True)
                     completion = accepted.get("completion")
                     completion_id = viralize_id(accepted.get("completion_id") or (completion.get("id") if isinstance(completion, dict) else None))
@@ -646,6 +782,7 @@ class RamosService:
                     attempts.append(key)
                     del attempts[:-500]
                     self.save()
+                    update('running', 'Executando o alvo da tarefa no Instagram…', phase='executing')
                     self.start(session_id, {**step, "mode": "command"}, viralize_run=run)
                     job = self.jobs[session_id]
                 update("running", "Executando o alvo da tarefa no Instagram…")
@@ -657,10 +794,13 @@ class RamosService:
                 if not job["success"] or (job["result"] or {}).get("estado") != expected:
                     update("attention", "A ação não foi confirmada como executada. Nada foi enviado para análise.", True)
                     return
-                update("running", "Ação confirmada pelo Instagram. Enviando para análise…")
+                update("running", "Ação confirmada pelo Instagram. Enviando para análise…", phase='confirming')
                 api.request("task/confirm-analysis", {**fields, "completion_id": offer["completion_id"], "is_refill": offer["is_refill"]}, write=True)
                 completed_count += 1
-            update("done", f"Rodada encerrada após o limite escolhido de {max_tasks} tarefa(s).")
+                with self.lock:
+                    run['completed_count'] = completed_count
+                    run['completed_total'] = run.get('completed_total', 0) + 1
+                    update('running', f'{run["completed_total"]} tarefa(s) enviada(s) para análise pelo servidor.', phase='polling')
         except ApiError as error:
             update("stopped" if run["stop"] else "error", str(error))
         except Exception:
@@ -668,6 +808,9 @@ class RamosService:
         finally:
             if api is not None:
                 api.close()
+            with self.lock:
+                if self.run_threads.get(session_id) is threading.current_thread():
+                    self.run_threads.pop(session_id, None)
 
     def mutate(self, method, route, body):
         if route == ['viralize', 'start'] and method == 'POST':
@@ -694,6 +837,8 @@ class RamosService:
                 if len(route) == 2 and method == "DELETE":
                     self.cancel(session_id, disconnect=True)
                     self.viralize_runs.pop(session_id, None)
+                    self.saved_runs.pop(session_id, None)
+                    private_json(self.run_file, self.saved_runs)
                     self.data["sessions"] = [s for s in self.data["sessions"] if s["id"] != session_id]
                 elif len(route) == 3 and method == "POST":
                     action = route[2]
@@ -720,12 +865,13 @@ class RamosService:
                     raise ApiError("Encerre as operações desta conta antes de removê-la.", 409)
                 for session in self.data["sessions"]:
                     if session.get("account_id") == account["id"]:
+                        self.cancel(session['id'], disconnect=True)
                         session.update(account_id=None, authenticated=False, status="disconnected", challenge=None)
                 self.data["accounts"].remove(account)
                 session_file = self.directory / "accounts" / account["id"] / "session.json"
                 session_file.unlink(missing_ok=True)
             elif route == ["proxy"] and method == "POST":
-                if self.jobs or any(run['status'] == 'running' for run in self.viralize_runs.values()):
+                if self.jobs or any(run['status'] in ACTIVE_RUNS for run in self.viralize_runs.values()):
                     raise ApiError("Aguarde ou encerre as operações antes de alterar o proxy.", 409)
                 value = str(body.get("url", "")).strip()
                 if body.get("enabled") and not value:
@@ -748,7 +894,10 @@ class RamosService:
                     raise ApiError("Método de autenticação inválido.")
                 if body.get('execution_mode', 'server') != 'server':
                     raise ApiError('O modo de execução suportado é no servidor.')
-                self.data["settings"] = {"two_factor_method": value, 'execution_mode': 'server'}
+                continuous = body.get('continuous_execution', self.data['settings']['continuous_execution'])
+                if type(continuous) is not bool:
+                    raise ApiError('Selecione um modo de execução válido.')
+                self.data["settings"] = {"two_factor_method": value, 'execution_mode': 'server', 'continuous_execution': continuous}
             elif route == ["macros"] and method == "POST":
                 name = str(body.get("name", "")).strip()
                 steps = body.get("steps")
@@ -773,10 +922,19 @@ class RamosService:
 
     def close(self):
         with self.lock:
+            if self.shutting_down:
+                return
+            self.shutting_down = True
             for run in self.viralize_runs.values():
                 run["stop"] = True
+                if run.get('stop_event'):
+                    run['stop_event'].set()
             for session_id in list(self.jobs):
                 self.cancel(session_id, disconnect=True)
+            threads = list(self.run_threads.values())
+        for thread in threads:
+            if thread is not threading.current_thread() and thread.is_alive():
+                thread.join(timeout=.2)
 
 
 class RamosHandler(BaseHTTPRequestHandler):
@@ -971,6 +1129,12 @@ def main():
             print(json.dumps({'event': 'ramos_proxy_check', **result['check']}, ensure_ascii=False), flush=True)
         threading.Thread(target=check_initial_proxy, daemon=True).start()
     server = make_server(service, args.port)
+    service.resume_runs()
+    print(json.dumps({'event': 'ramos_executor_ready', 'mode': 'server',
+                      'continuous_default': service.data['settings']['continuous_execution'],
+                      'saved_executions': len(service.saved_runs),
+                      'encrypted_storage': bool(os.environ.get('RAMOS_ENCRYPTION_KEY'))}), flush=True)
+    signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown, daemon=True).start())
     print(f"Ramos Bot: http://127.0.0.1:{server.server_address[1]}", flush=True)
     try:
         server.serve_forever()

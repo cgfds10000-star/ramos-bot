@@ -33,6 +33,7 @@ class BackendChecks(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.service = RamosService(self.temp.name, worker_command=[sys.executable, '-u', '-c', FAKE], dependency_check=lambda: True)
         self.session = self.service.data['sessions'][0]['id']
+        self.service.data['settings']['continuous_execution'] = False
 
     def tearDown(self):
         self.service.close()

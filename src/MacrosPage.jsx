@@ -1,3 +1,4 @@
+import {executionActive} from './api.js';
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, Eye, EyeOff, Info, KeyRound, Layers3, Minus, Monitor, Play, Plus, RefreshCw, Square } from 'lucide-react';
 
@@ -20,7 +21,7 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
   const disconnected = selected.filter(session => !session.authenticated);
   const allSelected = sessions.length > 0 && selected.length === sessions.length;
   const someSelected = selected.length > 0 && !allSelected;
-  const running = Object.values(status).some(run => run.status === 'running');
+  const running = Object.values(status).some(executionActive);
   const validKey = VIRALIZE_KEY_PATTERN.test(apiKey.trim());
   const numericLimit = Number(taskLimit);
   const validLimit = Number.isInteger(numericLimit) && numericLimit >= 1 && numericLimit <= 500;
@@ -140,7 +141,7 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
       <div className="macro-execution-state">
         <h2 id="macro-execution-title">Execução</h2>
         <p className="macro-execution-subtitle">Configurar e iniciar a execução das tarefas</p>
-        <span className={`macro-stopped ${running ? 'is-running' : ''}`}><Square aria-hidden="true" fill="currentColor"/>{running ? 'Em andamento' : 'Parada'}</span>
+        <span className={`macro-stopped ${running ? 'is-running' : ''}`}><Square aria-hidden="true" fill="currentColor"/>{running ? Object.values(status).some(run => run.status === 'running') ? 'Em andamento' : Object.values(status).some(run => run.status === 'recovering') ? 'Restaurando' : 'Aguardando tarefas' : 'Parada'}</span>
       </div>
       <label className="macro-task-type">
         <span className="macro-control-caption"><Layers3 aria-hidden="true"/><span>Tipo de tarefa</span></span>
@@ -155,15 +156,15 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
         <input type="number" min="1" max="500" step="1" inputMode="numeric" value={taskLimit} onChange={event => setTaskLimit(event.target.value)} disabled={busy || running} aria-describedby="macro-limit-help"/>
       </label>
       <button type="button" className="macro-start-button" disabled={!canStart} onClick={() => send('start', selected)}><Play aria-hidden="true"/>Iniciar</button>
-      <div id="macro-limit-help" className="macro-execution-note"><Info aria-hidden="true"/><p>Escolha quantas tarefas cada sessão pode executar nesta rodada. A rodada termina antes se a fila ficar vazia.</p></div>
+      <div id="macro-limit-help" className="macro-execution-note"><Info aria-hidden="true"/><p>Defina o limite de cada rodada. No modo contínuo, o servidor aguarda novas tarefas e inicia a próxima rodada automaticamente. Você pode interromper a execução a qualquer momento.</p></div>
       <ul className="macro-run-list" aria-live="polite">
         {sessions.filter(session => status[session.id] || messages[session.id]).map(session => {
           const run = status[session.id];
-          const stateLabel = run?.status === 'running' ? 'Em execução' : run?.status === 'done' ? 'Concluído' : run?.status === 'empty' ? 'Fila vazia' : run?.status === 'attention' ? 'Atenção' : run?.status === 'error' ? 'Erro' : '';
+          const stateLabel = run?.status === 'waiting' ? 'Aguardando tarefas' : run?.status === 'recovering' ? 'Restaurando' : run?.status === 'running' ? 'Em execução' : run?.status === 'done' ? 'Concluído' : run?.status === 'empty' ? 'Fila vazia' : run?.status === 'attention' ? 'Atenção' : run?.status === 'error' ? 'Erro' : '';
           return <li key={session.id}>
             <div className="macro-run-heading"><strong>{session.name}</strong>{stateLabel && <span className={`macro-run-status is-${run.status}`}>{stateLabel}</span>}</div>
-            <p>{messages[session.id] || run?.message}</p>
-            {run?.status === 'running' && <button type="button" className="text-button" disabled={busy || !online} onClick={() => send('stop', [session])}>Interromper</button>}
+            <p>{messages[session.id] || run?.message}</p>{run && <p>{run.completed_total || 0} tarefas enviadas para análise · Rodada {run.round || 1} · Execução no servidor</p>}
+            {executionActive(run) && <button type="button" className="text-button" disabled={busy || !online} onClick={() => send('stop', [session])}>Interromper</button>}
             {run?.can_skip && <button type="button" className="text-button" disabled={busy || !online || !validKey || !session.authenticated || !linkedIds.includes(session.id)} onClick={() => send('skip', [session])}>Pular tarefa</button>}
           </li>;
         })}

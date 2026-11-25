@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Bot, Bell, CalendarDays, ChevronLeft, CircleHelp, Code2, Copy, Download, Ellipsis, EllipsisVertical, Eye, EyeOff, Fingerprint, Layers3, Link2, List, LoaderCircle, Menu, Monitor, Play, Plus, Power, Radio, RefreshCw, Search, Settings, Settings2, ShieldCheck, Square, Terminal, Trash2, Upload, UsersRound, UserRound, Workflow, X } from 'lucide-react';
-import { RamosApi, parseCommand, selectSession, sessionBusy, statusLabel } from './api.js';
+import { RamosApi, parseCommand, selectSession, sessionBusy, statusLabel, executionActive } from './api.js';
 import VerificationForm from './VerificationForm.jsx';
 import MacrosPage from './MacrosPage.jsx';
 import LogsPage from './LogsPage.jsx';
@@ -45,6 +45,7 @@ function App() {
   const [macroText, setMacroText] = useState('');
   const [newAccount, setNewAccount] = useState('');
   const [twoFactor, setTwoFactor] = useState('autenticador');
+  const [continuousExecution, setContinuousExecution] = useState(true);
   const terminalRef = useRef(null);
   const poll = useRef(false);
   const visibleChallenge = useRef('');
@@ -155,7 +156,7 @@ function App() {
 
   function openPanel(value) {
     setError('');
-    if (value === 'settings') setTwoFactor(state.settings.two_factor_method);
+    if (value === 'settings') {setTwoFactor(state.settings.two_factor_method); setContinuousExecution(state.settings.continuous_execution !== false);}
     if (['macros', 'logs', 'proxy', 'settings'].includes(value)) { setPage(value); setPanel(null); return; }
     setPanel(value);
   }
@@ -211,7 +212,7 @@ function App() {
   }
 
   const toolForms = {
-    settings: <form className="panel-form" onSubmit={async event => { event.preventDefault(); const result = await act(() => api.post('/settings', { two_factor_method: twoFactor, execution_mode: 'server' }), 'Configurações salvas.'); if (result) setPanel(null); }}><div className="server-execution-setting"><span className="server-setting-title"><Radio size={22}/><strong>Execução no servidor</strong><span>Ativa</span></span><p>Depois de iniciar, suas sessões continuam no servidor se você ficar sem internet ou fechar o site.</p><p>Ao voltar, acompanhe o andamento e use Interromper para parar. A execução termina ao atingir o limite, esvaziar a fila ou encontrar um erro.</p></div><label>Verificação em duas etapas<select value={twoFactor} onChange={event => setTwoFactor(event.target.value)}><option value="autenticador">Aplicativo autenticador (TOTP)</option></select></label><p className="panel-intro">O login utiliza o código do aplicativo autenticador quando o Instagram fornece o contexto 2FA. Códigos são informados por você e usados uma única vez.</p><div className="setting-info"><span>Servidor</span><strong>{online ? 'Conectado' : 'Offline'}</strong></div><div className="setting-info"><span>Módulo Instagram</span><strong>{state.engine_ready ? 'Instalado' : 'Aguardando instalação'}</strong></div><button className="primary-button" disabled={!online || pending}><Settings2 size={17}/>Salvar configurações</button></form>,
+    settings: <form className="panel-form" onSubmit={async event => { event.preventDefault(); const result = await act(() => api.post('/settings', { two_factor_method: twoFactor, execution_mode: 'server', continuous_execution: continuousExecution }), 'Configurações salvas.'); if (result) setPanel(null); }}><div className="server-execution-setting"><span className="server-setting-title"><Radio size={22}/><strong>Execução no servidor</strong><span>Ativa</span></span><p>Depois de iniciar, suas sessões continuam no servidor se você ficar sem internet ou fechar o site.</p><p>Ao voltar, acompanhe o andamento e use Interromper para parar. No modo contínuo, o executor aguarda quando a fila está vazia e começa novas rodadas até você interromper. Erros e verificações da conta pausam o fluxo.</p></div><label className="toggle-row"><span>Execução contínua<small>Continuar aguardando tarefas entre as rodadas</small></span><input type="checkbox" role="switch" checked={continuousExecution} onChange={event => setContinuousExecution(event.target.checked)}/></label><p className="panel-intro">Esta configuração vale para a próxima execução iniciada. O servidor salva o andamento para retomar após reinícios quando não houver uma ação de resultado incerto.</p><label>Verificação em duas etapas<select value={twoFactor} onChange={event => setTwoFactor(event.target.value)}><option value="autenticador">Aplicativo autenticador (TOTP)</option></select></label><p className="panel-intro">O login utiliza o código do aplicativo autenticador quando o Instagram fornece o contexto 2FA. Códigos são informados por você e usados uma única vez.</p><div className="setting-info"><span>Servidor</span><strong>{online ? 'Conectado' : 'Offline'}</strong></div><div className="setting-info"><span>Módulo Instagram</span><strong>{state.engine_ready ? 'Instalado' : 'Aguardando instalação'}</strong></div><button className="primary-button" disabled={!online || pending}><Settings2 size={17}/>Salvar configurações</button></form>,
   };
 
   const title = { accounts: 'Contas abertas', proxy: 'Proxy', 'command-macros': 'Sequências de comandos', logs: 'Logs', settings: 'Configurações', help: 'Comandos do terminal', menu: 'Sua sessão', delete: 'Remover sessão?' }[panel];
@@ -227,7 +228,7 @@ function App() {
       </div>
     </header>
 
-    {page === 'macros' ? <MacrosPage sessions={state.sessions} api={api} refresh={refresh} status={state.viralize || {}} online={online} selectedIds={macroSelection} onSelectionChange={setMacroSelection}/> : page === 'logs' ? <LogsPage logs={state.logs} sessions={state.sessions} online={online} checking={checking} onExport={exportLogs}/> : page === 'proxy' ? <ProxyPage api={api} proxy={state.proxy} online={online} busy={state.sessions.some(sessionBusy) || Object.values(state.viralize || {}).some(run => run.status === 'running')} refresh={refresh}/> : page === 'settings' ? <main className="tool-page" aria-label={page === 'proxy' ? 'Proxy' : 'Configurações'}><section className="tool-page-card"><div className="tool-page-heading">{page === 'proxy' ? <ShieldCheck aria-hidden="true"/> : <Settings aria-hidden="true"/>}<h1>{page === 'proxy' ? 'Proxy' : 'Configurações'}</h1></div>{toolForms[page]}{error && <div className="error-banner" role="alert">{error}</div>}</section></main> : <main>
+    {page === 'macros' ? <MacrosPage sessions={state.sessions} api={api} refresh={refresh} status={state.viralize || {}} online={online} selectedIds={macroSelection} onSelectionChange={setMacroSelection}/> : page === 'logs' ? <LogsPage logs={state.logs} sessions={state.sessions} online={online} checking={checking} onExport={exportLogs}/> : page === 'proxy' ? <ProxyPage api={api} proxy={state.proxy} online={online} busy={state.sessions.some(sessionBusy) || Object.values(state.viralize || {}).some(executionActive)} refresh={refresh}/> : page === 'settings' ? <main className="tool-page" aria-label={page === 'proxy' ? 'Proxy' : 'Configurações'}><section className="tool-page-card"><div className="tool-page-heading">{page === 'proxy' ? <ShieldCheck aria-hidden="true"/> : <Settings aria-hidden="true"/>}<h1>{page === 'proxy' ? 'Proxy' : 'Configurações'}</h1></div>{toolForms[page]}{error && <div className="error-banner" role="alert">{error}</div>}</section></main> : <main>
       <section className="welcome"><h1>Bem-vindo, <span>Carlos</span></h1><p>Gerencie suas sessões, contas, proxy e macros.</p></section>
       <section className="stats" aria-label="Resumo do Ramos Bot">
         <button onClick={() => setWorkspaceOpen(false)}><Monitor/><span>Sessões</span><strong>{state.sessions.length}</strong></button>

@@ -91,3 +91,5 @@ export const statusLabel = status => ({
   disconnected: 'Aguardando autenticação', connecting: 'Autenticando conta', connected: 'Sessão ativa',
   running: 'Executando comando', awaiting_input: 'Verificação necessária', error: 'Conexão interrompida',
 }[status] || 'Aguardando autenticação');
+
+export function executionActive(run) { return ['running', 'waiting', 'recovering'].includes(run?.status); }
