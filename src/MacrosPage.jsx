@@ -4,28 +4,27 @@ import { Check, Eye, EyeOff, KeyRound, Minus, Monitor, Play, Plus } from 'lucide
 const VIRALIZE_KEY_STORAGE = 'ramos.viralize.apiKey';
 const VIRALIZE_KEY_PATTERN = /^vzs_[A-Za-z0-9_-]{1,480}$/;
 
-export default function MacrosPage({ sessions, api, refresh, status, online }) {
+export default function MacrosPage({ sessions, api, refresh, status, online, selectedIds, onSelectionChange }) {
   const [apiKey, setApiKey] = useState(() => {
     try { return localStorage.getItem(VIRALIZE_KEY_STORAGE) || ''; }
     catch { return ''; }
   });
   const [showKey, setShowKey] = useState(false);
-  const [selectedIds, setSelectedIds] = useState([]);
   const [linkedIds, setLinkedIds] = useState([]);
   const [taskType, setTaskType] = useState('follow');
   const [taskLimit, setTaskLimit] = useState('50');
   const [busy, setBusy] = useState(false);
   const [messages, setMessages] = useState({});
   const allCheckbox = useRef(null);
-  const eligible = sessions.filter(session => session.authenticated);
-  const selected = eligible.filter(session => selectedIds.includes(session.id));
-  const allSelected = eligible.length > 0 && selected.length === eligible.length;
+  const selected = sessions.filter(session => selectedIds.includes(session.id));
+  const disconnected = selected.filter(session => !session.authenticated);
+  const allSelected = sessions.length > 0 && selected.length === sessions.length;
   const someSelected = selected.length > 0 && !allSelected;
   const running = Object.values(status).some(run => run.status === 'running');
   const validKey = VIRALIZE_KEY_PATTERN.test(apiKey.trim());
   const numericLimit = Number(taskLimit);
   const validLimit = Number.isInteger(numericLimit) && numericLimit >= 1 && numericLimit <= 500;
-  const canApply = online && !busy && validKey && selected.length > 0 && !running;
+  const canApply = online && !busy && validKey && selected.length > 0 && !disconnected.length && !running;
   const canStart = canApply && validLimit && selected.every(session => linkedIds.includes(session.id));
 
   useEffect(() => {
@@ -34,7 +33,8 @@ export default function MacrosPage({ sessions, api, refresh, status, online }) {
 
   useEffect(() => {
     const activeIds = new Set(sessions.filter(session => session.authenticated).map(session => session.id));
-    setSelectedIds(ids => ids.filter(id => activeIds.has(id)));
+    const existingIds = new Set(sessions.map(session => session.id));
+    onSelectionChange(ids => ids.filter(id => existingIds.has(id)));
     setLinkedIds(ids => ids.filter(id => activeIds.has(id)));
   }, [sessions]);
 
@@ -47,7 +47,7 @@ export default function MacrosPage({ sessions, api, refresh, status, online }) {
   }, [apiKey]);
 
   function toggleSession(id) {
-    setSelectedIds(ids => ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id]);
+    onSelectionChange(ids => ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id]);
   }
 
   async function send(action, items) {
@@ -105,22 +105,23 @@ export default function MacrosPage({ sessions, api, refresh, status, online }) {
       <fieldset className="macro-sessions" disabled={busy || running}>
         <legend>Sessões para executar</legend>
         <label className="macro-session-option macro-select-all">
-          <input ref={allCheckbox} type="checkbox" checked={allSelected} disabled={!eligible.length} onChange={() => setSelectedIds(allSelected ? [] : eligible.map(session => session.id))}/>
+          <input ref={allCheckbox} type="checkbox" checked={allSelected} disabled={!sessions.length} onChange={() => onSelectionChange(allSelected ? [] : sessions.map(session => session.id))}/>
           <span className="macro-session-name">Todas as sessões</span>
           <span className={`macro-checkbox ${someSelected || allSelected ? 'is-checked' : ''}`} aria-hidden="true">{someSelected ? <Minus/> : allSelected ? <Check/> : null}</span>
         </label>
         <div className="macro-session-options">
           {sessions.map(session => <label className="macro-session-option" key={session.id}>
-            <input type="checkbox" checked={session.authenticated && selectedIds.includes(session.id)} disabled={!session.authenticated} onChange={() => toggleSession(session.id)}/>
+            <input type="checkbox" checked={selectedIds.includes(session.id)} onChange={() => toggleSession(session.id)}/>
             <Monitor className="macro-session-icon" aria-hidden="true"/>
             <span className="macro-session-name">{session.name}{!session.authenticated ? ' · desconectada' : linkedIds.includes(session.id) ? ' · vinculada' : ''}</span>
-            <span className={`macro-checkbox ${session.authenticated && selectedIds.includes(session.id) ? 'is-checked' : ''}`} aria-hidden="true">{session.authenticated && selectedIds.includes(session.id) && <Check/>}</span>
+            <span className={`macro-checkbox ${selectedIds.includes(session.id) ? 'is-checked' : ''}`} aria-hidden="true">{selectedIds.includes(session.id) && <Check/>}</span>
           </label>)}
         </div>
-        {!eligible.length && <p className="macro-empty-sessions">Conecte uma conta do Instagram em Sessões para começar.</p>}
+        {!sessions.length && <p className="macro-empty-sessions">Crie uma sessão na aba Sessões para começar.</p>}
       </fieldset>
 
       <p className="macro-selection-count" aria-live="polite">{selected.length === 1 ? '1 sessão selecionada' : `${selected.length} sessões selecionadas`}</p>
+      {disconnected.length > 0 && <p className="macro-flow-note" role="status">Conecte {disconnected.length === 1 ? disconnected[0].name : 'as sessões selecionadas que estão desconectadas'} na aba Sessões antes de aplicar o plugin.</p>}
       <button type="button" className="macro-apply-button" disabled={!canApply} onClick={() => send('link', selected)}><Plus aria-hidden="true"/>Aplicar plugin</button>
     </section>
 
