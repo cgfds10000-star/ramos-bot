@@ -60,8 +60,11 @@ body{-webkit-tap-highlight-color:transparent}
 .app-shell{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .app-shell :is(input,textarea){-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
 .app-shell :is(img,svg){-webkit-user-drag:none;user-select:none;pointer-events:none}
-#root>.app-shell>nav.bottom-nav button{border-color:#795c8b}
-#root>.app-shell>nav.bottom-nav button.active{border:2px solid #f6e9ff;outline:2px solid #a994b6;outline-offset:2px;box-shadow:inset 0 1px 8px #ec9aff88,0 0 0 5px #33243e}
-#root>.app-shell>nav.bottom-nav button:focus-visible{outline-color:#f4ccff;outline-offset:3px}
-.app-shell :is(.macro-start-button,.macro-apply-button,.proxy-save,.primary-button){outline:2px solid #9f83ac;outline-offset:2px}
-.app-shell :is(.macro-start-button,.macro-apply-button,.proxy-save,.primary-button):focus-visible{outline-color:#f4ccff;outline-offset:4px}
+#root>.app-shell>nav.bottom-nav button{border:1px solid #ffffff80}
+#root>.app-shell>nav.bottom-nav button.active{border:1px solid #fff;outline:0;box-shadow:inset 0 1px 8px #ec9aff66}
+#root>.app-shell>nav.bottom-nav button:focus-visible{outline:1px solid #f4ccff;outline-offset:2px}
+#root>.app-shell :is(.macro-start-button,.macro-apply-button,.proxy-save,.primary-button){border:1px solid #ffffffb3;outline:0}
+#root>.app-shell :is(.macro-start-button,.macro-apply-button,.proxy-save,.primary-button):focus-visible{outline:1px solid #f4ccff;outline-offset:2px}
+
+.app-shell .stats button{border:1px solid #ffffff80}
+.app-shell .stats button::after{display:none}

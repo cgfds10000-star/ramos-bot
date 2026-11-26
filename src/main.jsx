@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Bot, CalendarDays, Download, Eye, EyeOff, Instagram, KeyRound, Link2, List, Monitor, Play, Plus, Power, Search, Settings, ShieldCheck, Square, Trash2, UsersRound, Workflow, X } from 'lucide-react';
+import { Bot, CalendarDays, Download, Eye, EyeOff, Instagram, KeyRound, Link2, List, Monitor, Plus, Power, Search, Settings, ShieldCheck, Square, Trash2, UsersRound, Workflow, X } from 'lucide-react';
 import { RamosApi, parseCommand, selectSession, sessionBusy, executionActive } from './api.js';
 import MacrosPage from './MacrosPage.jsx';
 import LogsPage from './LogsPage.jsx';
@@ -204,7 +204,7 @@ function App() {
         <button onClick={() => { setPage('sessions'); setPanel(null); }}><Monitor/><span>Sessões</span><strong>{state.sessions.length}</strong></button>
         <button onClick={() => openPanel('accounts')}><Link2/><span>Contas abertas</span><strong>{state.sessions.filter(item => item.authenticated).length}</strong></button>
         <button onClick={() => openPanel('proxy')}><ShieldCheck/><span>Proxy</span><strong className="stat-text">{state.proxy.enabled ? 'Ativado' : 'Desativado'}</strong></button>
-        <button onClick={() => openPanel('macros')}><Play/><span>Macros</span><strong>{state.macros.length}</strong></button>
+        <button onClick={() => openPanel('macros')}><Bot/><span>Macros</span><strong>{state.macros.length}</strong></button>
       </section>
 
       <section className="sessions-home">
