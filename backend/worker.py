@@ -4,6 +4,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 from pathlib import Path
 import sys
 import time
@@ -19,14 +20,27 @@ def emit(event_type, **values):
 
 
 def ask_code(kind="code", message="Informe o código enviado pelo Instagram."):
-    emit("input_required", kind=kind, message=message)
-    line = sys.stdin.readline()
-    if not line:
-        raise EOFError("Verificação interrompida.")
-    value = json.loads(line).get("code", "")
-    if not isinstance(value, str) or not value.isdigit() or not (len(value) == 6 if kind == "authenticator" else 6 <= len(value) <= 8):
-        raise ValueError("Código inválido.")
-    return value
+    """Pedir o código pelo painel, aceitando nova tentativa em vez de derrubar o login."""
+    for _ in range(3):
+        emit("input_required", kind=kind, message=message)
+        line = sys.stdin.readline()
+        if not line:
+            raise EOFError("Verificação interrompida.")
+        try:
+            payload = json.loads(line)
+        except ValueError:
+            payload = {}
+        raw = payload.get("code", "") if isinstance(payload, dict) else ""
+        value = re.sub(r"\D", "", str(raw))
+        if kind == "authenticator":
+            if len(value) == 6:
+                return value
+            message = "O autenticador precisa de exatamente 6 dígitos. Digite novamente."
+        elif 6 <= len(value) <= 8:
+            return value
+        else:
+            message = "Código inválido. Digite de 6 a 8 números."
+    raise ValueError("Código inválido.")
 
 
 class EventConsole:
@@ -69,6 +83,19 @@ ERRORS = {
 }
 
 
+class _WebGetpass:
+    """O núcleo importa getpass; aqui ele nunca lê o terminal."""
+
+    @staticmethod
+    def getpass(prompt="", *_args, **_kwargs):
+        low = str(prompt).strip().lower()
+        if "app de autentica" in low:
+            return ask_code("authenticator", "Digite os 6 dígitos do aplicativo autenticador e toque em Confirmar.")
+        if "autenticador" in low:
+            return ask_code("two_factor", "Digite os 6 dígitos do autenticador, o código por SMS/e-mail ou um código de backup.")
+        return ask_code("code", "Digite o código que o Instagram enviou por SMS ou e-mail.")
+
+
 @contextlib.contextmanager
 def web_input(core):
     """Adaptar somente entrada/saída; o núcleo usa a mesma lógica do script CLI."""
@@ -76,19 +103,17 @@ def web_input(core):
         "CONSOLE": EventConsole(),
         "read_json": read_json,
         "save_private_json": write_json,
+        # Substituir o nome no módulo do núcleo: não existe fallback para o terminal.
+        "getpass": _WebGetpass,
         "read_authenticator_code": lambda: ask_code("authenticator", "Digite os 6 dígitos do aplicativo autenticador e toque em Confirmar."),
-        "read_verification_code": lambda *_: ask_code(),
+        "read_verification_code": lambda *_args, **_kwargs: ask_code("two_factor", "Digite o código que o Instagram enviou por SMS, e-mail ou o código de backup."),
     }
     previous = {name: getattr(core, name) for name in overrides}
-    previous_getpass = core.getpass.getpass
     try:
         for name, value in overrides.items():
             setattr(core, name, value)
-        # A continuação genérica do script lê getpass diretamente.
-        core.getpass.getpass = lambda *_args, **_kwargs: ask_code("two_factor", "Digite o código do autenticador/SMS ou o código de backup solicitado pelo Instagram.")
         yield
     finally:
-        core.getpass.getpass = previous_getpass
         for name, value in previous.items():
             setattr(core, name, value)
 

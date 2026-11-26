@@ -301,7 +301,7 @@ print(json.dumps({{"type": "done", "ok": True, "authenticated": True}}), flush=T
     def test_authenticator_rejects_non_six_digit_code(self):
         previous_input, previous_output = sys.stdin, worker.OUTPUT
         try:
-            sys.stdin = io.StringIO('{"code":"12345678"}\n')
+            sys.stdin = io.StringIO('{"code":"12345678"}\n' * 3)
             worker.OUTPUT = io.StringIO()
             with self.assertRaises(ValueError): worker.ask_code('authenticator')
         finally:
@@ -312,7 +312,10 @@ print(json.dumps({{"type": "done", "ok": True, "authenticated": True}}), flush=T
         self.assertTrue(command_payload({'command':'buscar','target':'teste','general':True})['general'])
         with self.assertRaises(ApiError): command_payload({'command':'seguir','target':'teste','by_id':True})
         self.assertEqual(self.service.snapshot()['settings']['two_factor_method'], 'auto')
-        with self.assertRaises(ApiError): self.service.mutate('POST',['settings'],{'two_factor_method':'autenticador'})
+        with self.assertRaises(ApiError): self.service.mutate('POST',['settings'],{'two_factor_method':'qualquer'})
+        self.service.mutate('POST',['settings'],{'two_factor_method':'autenticador'})
+        self.assertEqual(self.service.snapshot()['settings']['two_factor_method'], 'autenticador')
+        self.assertEqual(self.service.jobs, {})
 
     def test_session_storage_is_encrypted_and_roundtrips(self):
         from cryptography.fernet import Fernet

@@ -258,8 +258,10 @@ class RamosService:
             raise RuntimeError("Formato de dados do Ramos Bot não reconhecido.")
         for session in self.data["sessions"]:
             session.update(status="disconnected", authenticated=False, challenge=None)
-        # Preserve the Python CLI's automatic method selection and continuation.
-        self.data["settings"]["two_factor_method"] = "auto"
+        # A escolha feita no painel precisa sobreviver ao reinicio do servidor.
+        settings = self.data.setdefault("settings", {})
+        if settings.get("two_factor_method") not in ("auto", "autenticador"):
+            settings["two_factor_method"] = "auto"
         self.data['settings']['execution_mode'] = 'server'
         self.data['settings'].setdefault('continuous_execution', True)
         initial_proxy = os.environ.get('RAMOS_INITIAL_PROXY', '')
@@ -505,9 +507,23 @@ class RamosService:
 
     def monitor(self, session_id, job):
         process = job["process"]
-        timer = threading.Timer(600, lambda: self.cancel(session_id, timeout=True, expected=job))
-        timer.daemon = True
-        timer.start()
+        deadline = time.monotonic() + 600
+        watch_stop = threading.Event()
+
+        def watchdog():
+            nonlocal deadline
+            while not watch_stop.wait(2):
+                target = next((item for item in list(self.data["sessions"]) if item["id"] == session_id), None)
+                if target is None:
+                    return
+                if target.get("status") == "awaiting_input":
+                    # A verificacao esta com o usuario: o prazo nao corre.
+                    deadline = time.monotonic() + 600
+                elif time.monotonic() > deadline:
+                    self.cancel(session_id, timeout=True, expected=job)
+                    return
+
+        threading.Thread(target=watchdog, daemon=True).start()
         completed = False
         try:
             for line in process.stdout:
@@ -548,7 +564,7 @@ class RamosService:
             if process.poll() is None:
                 process.terminate()
         finally:
-            timer.cancel()
+            watch_stop.set()
             if process.stdin:
                 process.stdin.close()
             if process.stdout:
@@ -594,9 +610,13 @@ class RamosService:
             session = self.session(session_id)
             challenge = session.get("challenge")
             job = self.jobs.get(session_id)
-            if not challenge or not job or body.get("challenge_id") != challenge["id"]:
-                raise ApiError("Essa verificação já terminou. Atualize a sessão.", 409)
-            code = str(body.get("code", "")).replace(" ", "")
+            if not job:
+                raise ApiError("A verificação foi encerrada. Conecte novamente.", 409)
+            if not challenge:
+                raise ApiError("Esse código já foi enviado. Aguarde a resposta do Instagram.", 409)
+            if body.get("challenge_id") != challenge["id"]:
+                raise ApiError("Chegou uma nova solicitação de código. Digite o código mais recente.", 409)
+            code = re.sub(r"\D", "", str(body.get("code", "")))
             if not re.fullmatch(r"[0-9]{6}" if challenge.get("kind") == "authenticator" else r"[0-9]{6,8}", code):
                 raise ApiError("Informe o código numérico de 6 a 8 dígitos.")
             job["hidden"].append(code)
@@ -948,7 +968,7 @@ class RamosService:
                 self.log(None, "info", "Conexão de saída atualizada para Instagram e Viralize. Reconecte as contas.")
             elif route == ["settings"] and method == "POST":
                 value = body.get("two_factor_method")
-                if value != "auto":
+                if value not in ("auto", "autenticador"):
                     raise ApiError("Método de autenticação inválido.")
                 if body.get('execution_mode', 'server') != 'server':
                     raise ApiError('O modo de execução suportado é no servidor.')
