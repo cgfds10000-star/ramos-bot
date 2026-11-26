@@ -534,6 +534,9 @@ class RamosService:
             allowed_terms = set('bad request user agent useragent mismatch version signature invalid app application id authorization token access denied missing unsupported required login authenticate authentication unauthorized challenge csrf update outdated device header headers url endpoint platform not allowed authenticated status fail wrong incorrect'.split())
             terms = report.get('message_terms', [])
             checks['message_terms'] = [term for term in terms if isinstance(term, str) and term in allowed_terms] if isinstance(terms, list) else []
+            message = report.get('anonymous_message')
+            if not proxy and isinstance(message, str) and re.fullmatch(r"[\w\s.,!?;:'()\-]{0,240}", message):
+                checks['anonymous_message'] = message
             self.instagram_key_check = {"status": "completed", **checks}
         except (OSError, ValueError, subprocess.TimeoutExpired):
             self.instagram_key_check = {"status": "unavailable"}

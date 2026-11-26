@@ -27,14 +27,19 @@ def probe(proxy=""):
             error = core.safe_symbol(type(failure).__name__)
         response = getattr(client, "last_response", None)
         terms = []
+        anonymous_message = None
         try:
             data = response.json() if response is not None and len(response.content) <= 16384 else {}
             message = data.get('message') if isinstance(data, dict) else None
             if isinstance(message, str):
                 terms = sorted(set(re.findall(r'[a-z]+', message.casefold())) & MESSAGE_TERMS)
+                # Somente a resposta de uma chamada sem conta e sem proxy.
+                if not proxy and re.fullmatch(r"[\w\s.,!?;:'()\-]{0,240}", message):
+                    anonymous_message = message
         except (ValueError, AttributeError, TypeError):
             pass
         return {"available": available, "exception": error, "message_terms": terms,
+                "anonymous_message": anonymous_message,
                 **core.password_key_summary(response)}
 
 
