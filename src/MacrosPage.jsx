@@ -1,6 +1,7 @@
+import Select from './Select.jsx';
 import {executionActive} from './api.js';
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, Clock3, Layers3, LoaderCircle, Minus, Monitor, Play, Plus, RefreshCw, Square } from 'lucide-react';
+import { Check, Clock3, Layers3, LoaderCircle, Minus, Monitor, Play, Plus, RefreshCw, Square } from 'lucide-react';
 
 const SPEED_STORAGE = 'ramos.viralize.speed';
 const DEFAULT_PROFILES = {moderate: {label: 'Moderado'}, calm: {label: 'Pausado'}, slow: {label: 'Lento'}};
@@ -118,11 +119,11 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
 
       <label className="macro-task-type">
         <span className="macro-control-caption"><Layers3 aria-hidden="true"/><span>Tipo de tarefa</span></span>
-        <span className="macro-select-wrap"><select value={taskType} onChange={event => setTaskType(event.target.value)} disabled={busy || running}>
+        <span className="macro-select-wrap"><Select aria-label="Tipo de tarefa" value={taskType} onChange={setTaskType} disabled={busy || running}>
           <option value="follow">Seguir perfis</option>
           <option value="like">Curtir publicações</option>
           <option value="follow,like">Seguir e curtir</option>
-        </select><ChevronDown aria-hidden="true"/></span>
+        </Select></span>
       </label>
       <label className="macro-task-limit">
         <span className="macro-control-caption"><RefreshCw aria-hidden="true"/><span>Limite da rodada</span></span>
@@ -131,9 +132,9 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
       <div className="macro-speed-control">
         <label className="macro-speed">
           <span className="macro-control-caption"><Clock3 aria-hidden="true"/><span>Ritmo das ações</span></span>
-          <span className="macro-select-wrap"><select value={speed} onChange={event => setSpeed(event.target.value)} disabled={busy || running} aria-describedby="macro-speed-help">
+          <span className="macro-select-wrap"><Select aria-label="Ritmo das ações" value={speed} onChange={setSpeed} disabled={busy || running} aria-describedby="macro-speed-help">
             {Object.entries(profiles).map(([value, item]) => <option key={value} value={value}>{item.label}</option>)}
-          </select><ChevronDown aria-hidden="true"/></span>
+          </Select></span>
         </label>
         <p id="macro-speed-help" className="macro-flow-note">Pausas variáveis ao aceitar, executar e confirmar.{profile?.task && <> Intervalo de {profile.task[0]}–{profile.task[1]} s entre tarefas e {profile.round[0]}–{profile.round[1]} s entre rodadas.</>}</p>
       </div>

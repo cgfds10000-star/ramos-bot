@@ -15,6 +15,7 @@ import './logs.css';
 import './app-layout.css';
 import './proxy.css';
 import './premium.css';
+import './select.css';
 
 const api = new RamosApi();
 const VIRALIZE_KEY_STORAGE = 'ramos.viralize.apiKey';

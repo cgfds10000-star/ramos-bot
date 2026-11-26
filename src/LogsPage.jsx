@@ -1,5 +1,6 @@
+import Select from './Select.jsx';
 import React, {useState} from 'react';
-import {AlignLeft, CalendarDays, ChevronDown, CircleCheck, CircleX, Clock3, FileText, History, Search, TriangleAlert} from 'lucide-react';
+import {AlignLeft, CalendarDays, CircleCheck, CircleX, Clock3, FileText, History, Search, TriangleAlert} from 'lucide-react';
 import {filterLogs, formatLogTime, logCounts, logSessionName} from './logs.js';
 
 const types = {info: 'Informação', success: 'Sucesso', warning: 'Aviso', error: 'Erro', command: 'Comando'};
@@ -25,13 +26,13 @@ export default function LogsPage({logs, sessions, online, checking}) {
     </section>
     <label className="logs-search"><Search aria-hidden="true"/><input aria-label="Buscar no histórico" placeholder="Buscar no histórico..." value={query} onChange={event => setQuery(event.target.value)}/></label>
     <div className="logs-tools">
-      <span className="logs-select"><select aria-label="Filtrar logs por sessão" value={sessionId} onChange={event => setSessionId(event.target.value)}>
+      <span className="logs-select"><Select aria-label="Filtrar logs por sessão" value={sessionId} onChange={setSessionId}>
         <option value="">Todas as sessões</option><option value="__system__">Sistema</option>
         {sessions.map(session => <option key={session.id} value={session.id}>{session.name}</option>)}
-      </select><ChevronDown aria-hidden="true"/></span>
-      <span className="logs-select logs-period"><CalendarDays aria-hidden="true"/><select aria-label="Período do histórico" value={period} onChange={event => setPeriod(event.target.value)}>
+      </Select></span>
+      <span className="logs-select logs-period"><CalendarDays aria-hidden="true"/><Select aria-label="Período do histórico" value={period} onChange={setPeriod}>
         <option value="today">Hoje</option><option value="7days">Últimos 7 dias</option><option value="all">Todo o histórico</option>
-      </select><ChevronDown aria-hidden="true"/></span>
+      </Select></span>
     </div>
     <div className="logs-filters" role="group" aria-label="Filtrar por tipo de registro">
       {filters.map(([value, label, Icon]) => <button type="button" key={value} aria-pressed={tone === value}
@@ -42,7 +43,7 @@ export default function LogsPage({logs, sessions, online, checking}) {
     <section className="logs-activity" aria-labelledby="logs-activity-title">
       <div className="logs-activity-heading">
         <h2 id="logs-activity-title"><span className="logs-history-icon"><History aria-hidden="true"/></span><span>Histórico de atividades ({visible.length})</span></h2>
-        <span className="logs-select logs-order"><select aria-label="Ordem dos registros" value={order} onChange={event => setOrder(event.target.value)}><option value="newest">Mais recentes</option><option value="oldest">Mais antigos</option></select><ChevronDown aria-hidden="true"/></span>
+        <span className="logs-select logs-order"><Select aria-label="Ordem dos registros" value={order} onChange={setOrder}><option value="newest">Mais recentes</option><option value="oldest">Mais antigos</option></Select></span>
       </div>
       <div className="logs-feed" tabIndex={0} role="region" aria-label="Registros de atividade">
         <table className="logs-table">
