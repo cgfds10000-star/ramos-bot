@@ -8,6 +8,8 @@ __pycache__/
 *.db
 *.sqlite*
 data/
+!mobile/lib/data/
+!mobile/lib/data/backend.dart
 .venv/
 **/.dart_tool/
 *.zip
