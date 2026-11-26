@@ -15,6 +15,6 @@ export default {
   }
   const asset=assets[url.pathname]||assets['/index.html'];
   const raw=atob(asset.body);const bytes=Uint8Array.from(raw,c=>c.charCodeAt(0));
-  return new Response(request.method==='HEAD'?null:bytes,{headers:{'Content-Type':asset.type,'Cache-Control':url.pathname.startsWith('/assets/')?'public,max-age=31536000,immutable':'no-cache','X-Content-Type-Options':'nosniff','Referrer-Policy':'same-origin','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:8765; font-src 'self'; frame-ancestors 'self' https://chatgpt.com; base-uri 'self'; form-action 'self'"}});
+  return new Response(request.method==='HEAD'?null:bytes,{headers:{'Content-Type':asset.type,'Cache-Control':url.pathname.startsWith('/assets/')?'public,max-age=31536000,immutable':'no-cache','X-Content-Type-Options':'nosniff','Referrer-Policy':'same-origin','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'self' https://chatgpt.com; base-uri 'self'; form-action 'self'"}});
  }
 };

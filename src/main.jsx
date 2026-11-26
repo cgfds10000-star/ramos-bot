@@ -3,8 +3,6 @@ import { createRoot } from 'react-dom/client';
 import { Bot, Bell, CalendarDays, Download, EllipsisVertical, Eye, EyeOff, Fingerprint, Link2, List, LoaderCircle, LockKeyhole, Menu, Monitor, Play, Plus, Power, Radio, Search, Settings, Settings2, ShieldCheck, Square, Trash2, Upload, UsersRound, UserRound, Workflow, X } from 'lucide-react';
 import { RamosApi, parseCommand, selectSession, sessionBusy, statusLabel, executionActive } from './api.js';
 import VerificationForm from './VerificationForm.jsx';
-import {PcSetup, PcGate} from './PcConnection.jsx';
-import {PC_BASE, consumePcConnection, clearPcConnection} from './pc-connection.js';
 import MacrosPage from './MacrosPage.jsx';
 import LogsPage from './LogsPage.jsx';
 import ProxyPage from './ProxyPage.jsx';
@@ -19,10 +17,7 @@ import './app-layout.css';
 import './proxy.css';
 import './session-login.css';
 
-const pcConnection = consumePcConnection(window.location, sessionStorage, window.history);
-const cloudTarget = localStorage.getItem('ramos.selected');
-const cloudApi = new RamosApi();
-const api = pcConnection?.token ? new RamosApi(PC_BASE, {token: pcConnection.token}) : cloudApi;
+const api = new RamosApi();
 const empty = { sessions: [], accounts: [], macros: [], logs: [], proxy: { enabled: false }, settings: { two_factor_method: 'auto' } };
 
 
@@ -55,12 +50,6 @@ function App() {
   const [twoFactor, setTwoFactor] = useState('auto');
   const [continuousExecution, setContinuousExecution] = useState(true);
   const poll = useRef(false);
-  const handoffStarted = useRef(false);
-  const handoffId = useRef(null);
-  const [handoff, setHandoff] = useState('');
-  const [handoffError, setHandoffError] = useState('');
-  const pcLogin = Boolean(pcConnection?.token);
-  const requiresPc = state.connection?.requires_pc_login === true && !pcLogin;
   const visibleChallenge = useRef('');
   const session = selectSession(state, selected);
   const account = state.accounts.find(item => item.id === session?.account_id);
@@ -89,28 +78,6 @@ function App() {
     document.addEventListener('visibilitychange', resume);
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', resume); };
   }, []);
-
-  useEffect(() => {
-    const ready = pcLogin && state.sessions.find(item => item.authenticated);
-    if (!ready || handoffStarted.current) return;
-    handoffStarted.current = true;
-    setHandoff('working'); setHandoffError('');
-    (async () => {
-      const exported = await api.request(`/connector/session/${ready.id}`);
-      if (!exported.ready) { handoffStarted.current = false; return; }
-      const cloud = await cloudApi.state();
-      const target = cloud.sessions.find(item => item.id === cloudTarget);
-      handoffId.current ||= crypto.randomUUID();
-      const result = await cloudApi.post('/sessions/import', {
-        username: exported.username, settings: exported.settings,
-        import_id: handoffId.current, ...(target ? {session_id: target.id} : {}),
-      });
-      await api.post('/connector/complete').catch(() => {});
-      clearPcConnection(sessionStorage);
-      localStorage.setItem('ramos.selected', result.session_id);
-      window.location.replace(window.location.pathname + window.location.search);
-    })().catch(failure => {setHandoff('error'); setHandoffError(failure.message);});
-  }, [state.sessions, pcLogin]);
 
   useEffect(() => {
     const valid = selectSession(state, selected);
@@ -149,7 +116,6 @@ function App() {
   async function connect(event) {
     event?.preventDefault();
     if (!session || !online || busy) return;
-    if (requiresPc) {setPanel('pc'); return;}
     const suppliedPassword = password;
     const suppliedCode = verificationCode;
     setPassword(''); setVerificationCode(''); setVisiblePassword(false);
@@ -226,12 +192,12 @@ function App() {
   }
 
   const toolForms = {
-    settings: <form className="panel-form" onSubmit={async event => { event.preventDefault(); const result = await act(() => api.post('/settings', { two_factor_method: twoFactor, execution_mode: 'server', continuous_execution: continuousExecution }), 'Configurações salvas.'); if (result) setPanel(null); }}><div className="server-execution-setting"><span className="server-setting-title"><Radio size={22}/><strong>{pcLogin ? 'Login pelo PC' : 'Execução no servidor'}</strong><span>Ativa</span></span><p>{pcLogin ? 'Depois do login, a sessão é enviada ao site para continuar no Railway.' : 'Depois de iniciar, suas sessões continuam no servidor se você ficar sem internet ou fechar o site.'}</p><p>Ao voltar, acompanhe o andamento e use Interromper para parar. No modo contínuo, o executor aguarda quando a fila está vazia e começa novas rodadas até você interromper. Erros e verificações da conta pausam o fluxo.</p></div><label className="toggle-row"><span>Execução contínua<small>Continuar aguardando tarefas entre as rodadas</small></span><input type="checkbox" role="switch" checked={continuousExecution} onChange={event => setContinuousExecution(event.target.checked)}/></label><p className="panel-intro">Esta configuração vale para a próxima execução iniciada. O servidor salva o andamento para retomar após reinícios quando não houver uma ação de resultado incerto.</p><label>Verificação em duas etapas<select value={twoFactor} onChange={event => setTwoFactor(event.target.value)}><option value="autenticador">App de autenticação (TOTP de 6 dígitos)</option><option value="auto">Automático (igual ao script Python)</option></select></label><p className="panel-intro">O Instagram determina o método solicitado. O painel usa a mesma continuação do script Python para autenticador, SMS/e-mail ou código de backup. Cada código é enviado uma única vez.</p><div className="setting-info"><span>Servidor</span><strong>{online ? 'Conectado' : 'Offline'}</strong></div><div className="setting-info"><span>Módulo Instagram</span><strong>{state.engine_ready ? 'Instalado' : 'Aguardando instalação'}</strong></div><button className="primary-button" disabled={!online || pending}><Settings2 size={17}/>Salvar configurações</button></form>,
+    settings: <form className="panel-form" onSubmit={async event => { event.preventDefault(); const result = await act(() => api.post('/settings', { two_factor_method: twoFactor, execution_mode: 'server', continuous_execution: continuousExecution }), 'Configurações salvas.'); if (result) setPanel(null); }}><div className="server-execution-setting"><span className="server-setting-title"><Radio size={22}/><strong>Execução no servidor</strong><span>Ativa</span></span><p>Depois de iniciar, suas sessões continuam no servidor se você ficar sem internet ou fechar o site.</p><p>Ao voltar, acompanhe o andamento e use Interromper para parar. No modo contínuo, o executor aguarda quando a fila está vazia e começa novas rodadas até você interromper. Erros e verificações da conta pausam o fluxo.</p></div><label className="toggle-row"><span>Execução contínua<small>Continuar aguardando tarefas entre as rodadas</small></span><input type="checkbox" role="switch" checked={continuousExecution} onChange={event => setContinuousExecution(event.target.checked)}/></label><p className="panel-intro">Esta configuração vale para a próxima execução iniciada. O servidor salva o andamento para retomar após reinícios quando não houver uma ação de resultado incerto.</p><label>Verificação em duas etapas<select value={twoFactor} onChange={event => setTwoFactor(event.target.value)}><option value="autenticador">App de autenticação (TOTP de 6 dígitos)</option><option value="auto">Automático (igual ao script Python)</option></select></label><p className="panel-intro">O Instagram determina o método solicitado. O painel usa a mesma continuação do script Python para autenticador, SMS/e-mail ou código de backup. Cada código é enviado uma única vez.</p><div className="setting-info"><span>Servidor</span><strong>{online ? 'Conectado' : 'Offline'}</strong></div><div className="setting-info"><span>Módulo Instagram</span><strong>{state.engine_ready ? 'Instalado' : 'Aguardando instalação'}</strong></div><button className="primary-button" disabled={!online || pending}><Settings2 size={17}/>Salvar configurações</button></form>,
   };
 
-  const title = { accounts: 'Contas abertas', proxy: 'Proxy', 'command-macros': 'Sequências de comandos', logs: 'Logs', settings: 'Configurações', pc: 'Entrar com meu IP', menu: 'Sua sessão', delete: 'Remover sessão?' }[panel];
+  const title = { accounts: 'Contas abertas', proxy: 'Proxy', 'command-macros': 'Sequências de comandos', logs: 'Logs', settings: 'Configurações', menu: 'Sua sessão', delete: 'Remover sessão?' }[panel];
 
-  if (accessLocked) return <div className="panel-access"><div className="access-glow"/><div className="access-brand"><span>R</span>RAMOS BOT</div><form className="access-card" onSubmit={event => { event.preventDefault(); const entered = panelPassword; setPanelPassword(''); act(() => api.post('/access/login', {password:entered})); }}><div className="access-icon"><ShieldCheck size={30}/></div><span className="eyebrow">SEU ESPAÇO DE TRABALHO</span><h1>Bem-vindo ao<br/><span>Ramos Bot.</span></h1><p>Entre para gerenciar suas sessões e contas.</p><label>Senha do painel<input type="password" autoComplete="current-password" placeholder="Digite sua senha" value={panelPassword} onChange={event => setPanelPassword(event.target.value)} required maxLength={200}/></label><button className="primary-button" disabled={pending || !panelPassword}>{pending ? <LoaderCircle className="spin" size={20}/> : <Fingerprint size={20}/>}Entrar no painel</button>{error && <div className="error-banner" role="alert">{error}</div>}<a className="text-button" href="/downloads/Ramos-Conector-PC.zip" download>Baixar conector para entrar com meu IP</a><span className="access-footnote"><ShieldCheck size={14}/>Acesso protegido</span></form></div>;
+  if (accessLocked) return <div className="panel-access"><div className="access-glow"/><div className="access-brand"><span>R</span>RAMOS BOT</div><form className="access-card" onSubmit={event => { event.preventDefault(); const entered = panelPassword; setPanelPassword(''); act(() => api.post('/access/login', {password:entered})); }}><div className="access-icon"><ShieldCheck size={30}/></div><span className="eyebrow">SEU ESPAÇO DE TRABALHO</span><h1>Bem-vindo ao<br/><span>Ramos Bot.</span></h1><p>Entre para gerenciar suas sessões e contas.</p><label>Senha do painel<input type="password" autoComplete="current-password" placeholder="Digite sua senha" value={panelPassword} onChange={event => setPanelPassword(event.target.value)} required maxLength={200}/></label><button className="primary-button" disabled={pending || !panelPassword}>{pending ? <LoaderCircle className="spin" size={20}/> : <Fingerprint size={20}/>}Entrar no painel</button>{error && <div className="error-banner" role="alert">{error}</div>}<span className="access-footnote"><ShieldCheck size={14}/>Acesso protegido</span></form></div>;
 
   return <div className={`app-shell ${page === 'sessions' ? 'is-home' : `is-${page}`}`}>
     <header className="header" inert={workspaceOpen || Boolean(panel)}>
@@ -244,7 +210,6 @@ function App() {
 
     {page === 'macros' ? <MacrosPage sessions={state.sessions} api={api} refresh={refresh} status={state.viralize || {}} pacingProfiles={state.viralize_pacing} online={online} selectedIds={macroSelection} onSelectionChange={setMacroSelection}/> : page === 'logs' ? <LogsPage logs={state.logs} sessions={state.sessions} online={online} checking={checking} onExport={exportLogs}/> : page === 'proxy' ? <ProxyPage api={api} proxy={state.proxy} online={online} busy={state.sessions.some(sessionBusy) || Object.values(state.viralize || {}).some(executionActive)} refresh={refresh}/> : page === 'settings' ? <main className="tool-page" aria-label={page === 'proxy' ? 'Proxy' : 'Configurações'}><section className="tool-page-card"><div className="tool-page-heading">{page === 'proxy' ? <ShieldCheck aria-hidden="true"/> : <Settings aria-hidden="true"/>}<h1>{page === 'proxy' ? 'Proxy' : 'Configurações'}</h1></div>{toolForms[page]}{error && <div className="error-banner" role="alert">{error}</div>}</section></main> : <main inert={workspaceOpen || Boolean(panel)}>
       <section className="welcome"><h1>Bem-vindo, <span>Carlos</span></h1><p>Gerencie suas sessões, contas, proxy e macros.</p></section>
-      <section className="pc-origin"><span><Monitor size={18}/>{pcLogin ? 'Login pela conexão do seu PC' : 'Login com seu IP · execução no Railway'}</span>{!pcLogin && <button type="button" onClick={() => setPanel('pc')}>Entrar com meu IP</button>}</section>
       <section className="stats" aria-label="Resumo do Ramos Bot">
         <button onClick={() => setWorkspaceOpen(false)}><Monitor/><span>Sessões</span><strong>{state.sessions.length}</strong></button>
         <button onClick={() => openPanel('accounts')}><Link2/><span>Contas abertas</span><strong>{state.sessions.filter(item => item.authenticated).length}</strong></button>
@@ -277,15 +242,7 @@ function App() {
         <div className="session-content">
           {checking && <div className="session-progress" role="status"><LoaderCircle className="spin" size={24}/><p>Conectando ao Ramos Bot...</p></div>}
           {!online && !checking && <div className="offline-note"><Radio size={19}/><div><strong>Servidor offline</strong><p>Verifique a conexão para entrar na sua conta.</p></div></div>}
-          {session && !session.authenticated && !busy && requiresPc && <>
-            {state.accounts.some(item => item.has_session) && <form className="login-form" onSubmit={event => {event.preventDefault(); act(() => api.post(`/sessions/${session.id}/login`, {username: handle}));}}>
-              <h1>Sessão salva</h1>
-              <label className="saved-account"><span>Conta:</span><select aria-label="Conta com sessão salva" value={state.accounts.some(item => item.username === handle && item.has_session) ? handle : ''} onChange={event => setHandle(event.target.value)} required><option value="">Escolha uma conta</option>{state.accounts.filter(item => item.has_session).map(item => <option value={item.username} key={item.id}>@{item.username}</option>)}</select></label>
-              <button className="connect-button" disabled={!online || pending || !state.accounts.some(item => item.username === handle && item.has_session)}>Conectar sessão salva</button>
-            </form>}
-            <PcSetup/>
-          </>}
-          {session && !session.authenticated && !busy && !requiresPc && <form className="login-form" onSubmit={connect}>
+          {session && !session.authenticated && !busy && <form className="login-form" onSubmit={connect}>
             <h1>Login</h1>
             <label className="saved-account"><span>Conta salva:</span><select aria-label="Escolher conta salva" value={state.accounts.some(item => item.username === handle) ? handle : ''} onChange={event => { setHandle(event.target.value); setPassword(''); setVerificationCode(''); }}><option value="">Nova conta</option>{state.accounts.map(item => <option value={item.username} key={item.id}>@{item.username}</option>)}</select></label>
             <label className="login-field"><UserRound aria-hidden="true"/><input id="instagram-user" autoComplete="username" placeholder="seu_usuario" aria-label="Usuário do Instagram" value={handle} onChange={event => setHandle(event.target.value)} maxLength={30} required autoCapitalize="none" spellCheck="false"/></label>
@@ -304,22 +261,14 @@ function App() {
     </SessionLoginDialog>}
 
     {panel && <div className="modal-backdrop" onClick={event => { if (event.target === event.currentTarget) setPanel(null); }} onKeyDown={event => { if (event.key === 'Escape') setPanel(null); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabIndex={-1} ref={node => { if (node && !node.contains(document.activeElement)) node.focus(); }}><div className="modal-header"><div><span className="eyebrow">RAMOS BOT</span><h2 id="modal-title">{title}</h2></div><IconButton label="Fechar" onClick={() => setPanel(null)}><X size={22}/></IconButton></div>
-      {panel === 'pc' && <PcSetup/>}
       {panel === 'accounts' && <><p className="panel-intro">Contas salvas no seu Ramos Bot. Escolha uma para conectar na sessão atual.</p><div className="item-list">{state.accounts.map(item => <div className="list-item" key={item.id}><span className="avatar"><UserRound size={20}/></span><div><strong>@{item.username}</strong><small>{state.sessions.some(s => s.account_id === item.id && s.authenticated) ? 'Conectada' : item.has_session ? 'Sessão salva' : 'Aguardando login'}</small></div><button className="text-button" disabled={busy} onClick={() => { setHandle(item.username); setPassword(''); setVerificationCode(''); setPage('sessions'); setWorkspaceOpen(true); setPanel(null); }}>Usar</button><IconButton label={'Remover @' + item.username} disabled={pending || !online} onClick={() => act(() => api.remove(`/accounts/${item.id}`), 'Conta removida.')}><Trash2 size={16}/></IconButton></div>)}{!state.accounts.length && <div className="empty-state"><UsersRound size={28}/><strong>Nenhuma conta salva</strong><p>Adicione o usuário ou conecte sua primeira conta.</p></div>}</div><form className="panel-form" onSubmit={async event => { event.preventDefault(); const result = await act(() => api.post('/accounts', { username: newAccount }), 'Conta adicionada.'); if (result) setNewAccount(''); }}><label>Novo usuário<input value={newAccount} onChange={event => setNewAccount(event.target.value)} placeholder="usuario do Instagram" autoCapitalize="none" maxLength={30} required/></label><button className="primary-button" disabled={!online || pending}><Plus size={17}/>Adicionar conta</button></form></>}
       {panel === 'command-macros' && <><p className="panel-intro">Salve uma sequência de comandos. Ela só será executada quando você tocar em Iniciar.</p><div className="item-list">{state.macros.map(item => <div className="list-item" key={item.id}><span className="avatar"><Workflow size={20}/></span><div><strong>{item.name}</strong><small>{item.steps.length} comando{item.steps.length > 1 ? 's' : ''}</small></div><button className="text-button" disabled={!online || !session?.authenticated || busy || pending} onClick={async () => { const result = await act(() => api.post(`/sessions/${session.id}/macro`, { macro_id: item.id })); if (result) setPanel(null); }}>Iniciar</button><IconButton label={'Excluir macro ' + item.name} disabled={!online || pending} onClick={() => act(() => api.remove(`/macros/${item.id}`))}><Trash2 size={16}/></IconButton></div>)}{!state.macros.length && <div className="empty-state"><Workflow size={27}/><strong>Sua primeira macro</strong><p>Organize seus comandos em uma sequência.</p></div>}</div><form className="panel-form" onSubmit={saveMacro}><label>Nome<input value={macroName} onChange={event => setMacroName(event.target.value)} placeholder="Consultar perfis" maxLength={60} required/></label><label>Comandos<textarea rows={4} value={macroText} onChange={event => setMacroText(event.target.value)} placeholder={'perfil usuario\nbuscar "nome" --limite 5'} required/></label><span className="form-note">Um comando por linha, até 20 comandos.</span><button className="primary-button" disabled={!online || pending}><Plus size={17}/>Salvar macro</button></form></>}
       {panel === 'menu' && <div className="menu-list"><button onClick={async () => { const result = await act(() => api.post('/sessions')); if (result) { setPage('sessions'); setSelected(result.session_id); setWorkspaceOpen(true); setPanel(null); } }} disabled={!online || pending}><Plus size={19}/>Nova sessão</button><button onClick={() => openPanel('accounts')}><UsersRound size={19}/>Minhas contas</button><label className="menu-import"><Upload size={19}/>Importar login.txt<input type="file" accept=".txt,text/plain" onChange={importCredentials}/></label><button onClick={() => openPanel('command-macros')}><Workflow size={19}/>Sequências de comandos</button><button onClick={exportDiagnostic} disabled={!session?.account_id}><ShieldCheck size={19}/>Exportar diagnóstico</button><button onClick={exportLogs} disabled={!sessionLogs.length}><Download size={19}/>Exportar logs</button><button onClick={async () => { await clearLogs(); setPanel(null); }} disabled={!session || !online || pending}><Trash2 size={19}/>Limpar logs</button><button className="danger" onClick={() => setPanel('delete')} disabled={!session || !online || pending}><X size={19}/>Remover sessão</button></div>}
       {panel === 'delete' && <><p className="panel-intro">A atividade de {session?.name} será encerrada. A conta continuará na sua lista.</p><button className="primary-button danger-button" disabled={pending} onClick={async () => { const result = await act(() => api.remove(`/sessions/${session.id}`), 'Sessão removida.'); if (result) setPanel(null); }}><Trash2 size={17}/>Remover sessão</button></>}
       {error && <div className="error-banner modal-error" role="alert">{error}</div>}
     </section></div>}
-    {pcLogin && handoff && <div className="pc-handoff" role="status"><div>{handoff === 'working' ? <><LoaderCircle className="spin" size={32}/><h2>Enviando sessão ao site…</h2><p>Depois, você pode fechar o conector do PC.</p></> : <><h2>Concluir conexão com o site</h2><p>{handoffError}</p><button className="primary-button" onClick={() => {handoffStarted.current = false; setHandoff(''); refresh(true);}}>Tentar enviar novamente</button><button className="text-button" onClick={() => window.location.reload()}>Reconectar o painel</button></>}</div></div>}
     {toast && <div className="toast" role="status"><ShieldCheck size={17}/>{toast}</div>}
   </div>;
 }
 
-function Root() {
-  const [connected, setConnected] = useState(!pcConnection);
-  if (!connected) return <PcGate api={api} cloudApi={cloudApi} connection={pcConnection} onConnected={() => setConnected(true)}/>;
-  return <App/>;
-}
-
-createRoot(document.getElementById('root')).render(<Root/>);
+createRoot(document.getElementById('root')).render(<App/>);

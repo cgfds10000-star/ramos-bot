@@ -2,12 +2,6 @@
 
 Painel React com o visual roxo neon da referência e backend Python real. O login do Instagram e o código de verificação são informados na própria página.
 
-## Entrar pelo seu IP uma vez
-
-No site, clique em **Entrar com meu IP**, baixe o conector e extraia a pasta. Abra **INICIAR-CONEXAO-PC.cmd** e faça o login e o 2FA na aba que será aberta. Requer Python 3.11 ou superior; não precisa de Node.js.
-
-Depois de enviar a sessão autenticada ao site, o conector fecha. O Railway continua a execução e o PC pode ser desligado. O navegador pode pedir permissão para se conectar ao módulo local; permita esse acesso para realizar o login. A senha do Instagram e o código 2FA são enviados ao módulo do PC, e somente a sessão autenticada é transferida ao seu painel por HTTPS.
-
 ## Testar no Windows
 
 1. Baixe o projeto em **Code → Download ZIP** e extraia a pasta.

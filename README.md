@@ -2,18 +2,6 @@
 
 Painel React com o visual roxo neon da referência e backend Python real. O login do Instagram e o código de verificação são informados na própria página.
 
-## Login com o IP do PC, execução no Railway
-
-1. No site, escolha **Entrar com meu IP** e baixe o **Ramos-Conector-PC.zip**.
-2. Extraia a pasta inteira e abra **INICIAR-CONEXAO-PC.cmd**. Requer Python 3.11+; o conector prepara as dependências em uma instalação isolada, sem precisar de Node.js.
-3. Na aba que abrir, clique em **Conectar ao meu PC**. Permita a conexão local no navegador, caso solicitado, e informe a senha do painel se a sessão do site expirou.
-4. Faça o login e o 2FA normalmente. O navegador envia os dados diretamente a `127.0.0.1:8765`; a senha e o código não vão ao Railway nesse fluxo.
-5. Depois de autenticar, o site recebe a sessão por HTTPS e o Railway a valida, sem reenviar a senha. O conector local é encerrado e a aba volta à sessão do site. A execução seguinte usa o Railway e não depende de manter o PC ligado.
-
-O conector só aceita conexões de loopback, exige uma chave local e autoriza a origem HTTPS exata do painel por CORS. A chave de conexão é retirada do fragmento da URL imediatamente e fica no armazenamento de sessão da aba; a sessão do Instagram não é salva no armazenamento do navegador. O arquivo `.ramos-pc.json` e a pasta `data-pc` devem permanecer privados. A sessão local é gravada com criptografia, e a sessão recebida no Railway usa a criptografia já configurada no servidor. Nenhum dado pessoal é incluído no ZIP.
-
-No deploy, `RAMOS_REQUIRE_PC_LOGIN=1` impede que uma falha do conector resulte em login com senha pelo Railway. A importação valida a conta e a estrutura da sessão, exige autenticação e CSRF do painel e usa um identificador idempotente para evitar repetir a transferência. Uma sessão só aparece conectada no Railway depois da validação pelo worker. Os testes de integração simulam as respostas do Instagram; não garantem que o provedor aceitará uma sessão após a mudança de rede.
-
 ## Testar no Windows
 
 1. Baixe o projeto em **Code → Download ZIP** e extraia a pasta.

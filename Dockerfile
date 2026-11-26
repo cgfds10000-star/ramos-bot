@@ -6,8 +6,6 @@ COPY index.html vite.config.js ./
 COPY src ./src
 COPY public ./public
 COPY scripts ./scripts
-COPY backend ./backend
-COPY connector ./connector
 RUN npm run build
 
 FROM python:3.12-slim-bookworm
@@ -16,6 +14,6 @@ COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt
 COPY backend ./backend
 COPY --from=frontend /app/dist/client ./dist/client
-ENV PYTHONUNBUFFERED=1 RAMOS_HOST=0.0.0.0 RAMOS_DATA_DIR=/data PORT=8765 RAMOS_REQUIRE_PC_LOGIN=1
+ENV PYTHONUNBUFFERED=1 RAMOS_HOST=0.0.0.0 RAMOS_DATA_DIR=/data PORT=8765
 EXPOSE 8765
 CMD ["python","backend/app.py"]
