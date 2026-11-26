@@ -84,6 +84,19 @@ class BackendChecks(unittest.TestCase):
         self.assertNotIn('00123456', json.dumps(self.service.snapshot()))
         self.assertNotIn('00123456', self.service.state_file.read_text())
 
+    def test_secret_is_rejected_for_sms_and_invalid_code_does_not_consume_challenge(self):
+        self.service.worker_command = [sys.executable, '-u', '-c', FAKE.replace('"authenticator"', '"code"')]
+        self.service.start(self.session, {'mode': 'login', 'username': 'teste', 'password': 'synthetic'})
+        self.wait(lambda: self.service.session(self.session)['challenge'] is not None)
+        challenge = self.service.session(self.session)['challenge']['id']
+        for entry in ({'secret':'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'}, {'code':'abc123456'}, {'code':'1234567'}, {'code':123456}):
+            with self.subTest(entry=list(entry)), self.assertRaises(ApiError):
+                self.service.submit_input(self.session, {'challenge_id':challenge, **entry})
+            self.assertEqual(self.service.session(self.session)['challenge']['id'], challenge)
+        self.service.submit_input(self.session, {'challenge_id':challenge, 'code':'123456'})
+        self.wait(lambda: self.session not in self.service.jobs)
+        self.assertTrue(self.service.session(self.session)['authenticated'])
+
     def test_cancel_prevents_a_late_success(self):
         self.service.start(self.session, {'mode': 'login', 'username': 'teste', 'password': 'synthetic'})
         self.wait(lambda: self.service.session(self.session)['challenge'] is not None)

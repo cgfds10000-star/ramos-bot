@@ -32,7 +32,7 @@ O modo padrao, --2fa auto, preserva o fluxo de aprovacao anterior.
 
 Login CAA/Bloks e perfil Android mantidos pela biblioteca nao oficial
 instagrapi 3.2.19. O nucleo CAA e o mesmo que autenticou a conta; login e
-busca foram confirmados pelo usuario. Codigo e aprovacao continuam manuais.
+busca foram confirmados pelo usuario. Codigo pode ser digitado ou gerado localmente a partir da chave Base32; aprovacao continua manual.
 As acoes seguem as rotas REST analisadas no APK 458.0.0.0.45, validam o ID
 autenticado e conferem o estado antes de confirmar seguir/curtir.
 Nao ha fallback para login legado nem repeticao automatica de escritas.
@@ -40,6 +40,11 @@ Testes de regressao usam sessoes sinteticas e respostas simuladas.
 """
 from __future__ import annotations
 import argparse
+import base64
+import binascii
+import hashlib
+import hmac
+import struct
 import getpass
 from importlib.metadata import version, PackageNotFoundError
 import json
@@ -56,7 +61,7 @@ import unicodedata
 from urllib.parse import urlsplit
 
 CLIENT_VERSION = "3.2.19"
-REVISION = "caa-4-acoes-4-totp"
+REVISION = "caa-4-acoes-4-totp-local"
 
 
 # ---------------------------------------------------------------------------
@@ -545,11 +550,45 @@ def native_authenticator_info(data):
     return next(iter(found.values()), None)
 
 
-def read_authenticator_code():
-    CONSOLE.info("Abra seu app de autenticacao e use o codigo atual de seis digitos.")
-    code = re.sub(r"\s+", "", getpass.getpass("Codigo do app de autenticacao: "))
-    if not re.fullmatch(r"[0-9]{6}", code):
-        raise FlowError("O autenticador precisa de seis digitos. O codigo nao foi enviado.")
+def generate_totp(secret, timestamp=None):
+    """TOTP SHA-1 / 30 s / 6 digitos, calculado localmente (RFC 6238)."""
+    normalized = re.sub(r"[\s-]+", "", str(secret)).upper().rstrip("=")
+    if not re.fullmatch(r"[A-Z2-7]{16,128}", normalized):
+        raise FlowError("Chave 2FA invalida. Cole a chave Base32 completa ou digite o codigo numerico.")
+    try:
+        key = base64.b32decode(normalized + "=" * (-len(normalized) % 8), casefold=True)
+    except (binascii.Error, ValueError):
+        raise FlowError("Chave 2FA invalida. Confira os caracteres; nenhum codigo foi enviado.") from None
+    when = time.time() if timestamp is None else timestamp
+    if when < 0:
+        raise FlowError("O relogio do computador precisa estar correto para gerar o 2FA.")
+    counter = int(when // 30)
+    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    offset = digest[-1] & 15
+    number = int.from_bytes(digest[offset:offset + 4], "big") & 0x7fffffff
+    return f"{number % 1000000:06d}"
+
+
+def parse_two_factor_input(value, *, allow_backup=True, timestamp=None):
+    """Distinguir codigo manual de chave Base32; nao registrar nenhum deles."""
+    text = re.sub(r"[\s-]+", "", value)
+    if not text:
+        raise FlowError("Codigo ou chave 2FA nao informado.")
+    if re.fullmatch(r"[0-9]{6}", text):
+        return text, None
+    if allow_backup and re.fullmatch(r"[0-9]{8}", text):
+        return text, None
+    # A chave so existe em memoria durante esta continuacao de login.
+    normalized = text.upper().rstrip("=")
+    code = generate_totp(normalized, timestamp=timestamp)
+    return code, normalized
+
+
+def read_authenticator_code(client=None):
+    CONSOLE.info("Digite o codigo de seis digitos ou cole a chave 2FA com letras e numeros.")
+    code, secret = parse_two_factor_input(input("Codigo ou chave do autenticador: "), allow_backup=False)
+    if client is not None:
+        client._local_totp_secret = secret
     return code
 
 
@@ -584,14 +623,14 @@ def authenticator_login(client, data):
                     return result
                 context = authenticator_context(client, result) or context
             client.authenticator_state = "aguardando_codigo"
-            code = read_authenticator_code()
+            code = read_authenticator_code(client)
             client.authenticator_state = "codigo_enviado"
             result = client.bloks_two_step_verification_verify_code(context, code, challenge="totp", should_trust_device=False)
             accepted = client.bloks_apply_login_response(result)
         else:
             client.authenticator_branch = "nativo_metodo_3"
             client.authenticator_state = "aguardando_codigo"
-            code = read_authenticator_code()
+            code = read_authenticator_code(client)
             payload = {
                 "verification_code": code, "verification_method": "3",
                 "two_factor_identifier": info["two_factor_identifier"],
@@ -622,6 +661,7 @@ def authenticator_login(client, data):
     finally:
         code = None
         client.authenticator_in_progress = False
+        client._local_totp_secret = None
 
 
 # ---------------------------------------------------------------------------
@@ -716,6 +756,7 @@ def load_client_class():
             self.authenticator_in_progress = False
             self.authenticator_state = "nao_solicitado"
             self.authenticator_branch = None
+            self._local_totp_secret = None
             super().__init__(*args, **kwargs)
 
         def private_request(self, endpoint, *args, **kwargs):
@@ -728,6 +769,16 @@ def load_client_class():
                 self.private_requests_count += 1
                 return self._send_private_request(endpoint, *args, **kwargs)
             return super().private_request(endpoint, *args, **kwargs)
+
+        def bloks_two_step_verification_verify_code(self, two_step_verification_context, code, **kwargs):
+            secret = getattr(self, "_local_totp_secret", None)
+            if secret:
+                if kwargs.get("challenge", "totp") != "totp":
+                    raise FlowError("O servidor solicitou outro metodo. Para SMS ou backup, digite o codigo recebido; a chave gera somente codigo de autenticador.")
+                # Gerar de novo imediatamente antes do envio: as telas de
+                # preparacao podem ter atravessado uma janela de 30 segundos.
+                code = generate_totp(secret)
+            return super().bloks_two_step_verification_verify_code(two_step_verification_context, code, **kwargs)
 
         def bloks_caa_resolve_two_step_verification(self, send_result, verification_code="", domain=None):
             if self.two_factor_method == "autenticador" and (
@@ -899,7 +950,7 @@ def safe_symbol(value):
 def read_verification_code(username, choice):
     name = getattr(choice, "name", str(choice)).upper()
     source = "e-mail" if name == "EMAIL" else "SMS" if name == "SMS" else "metodo solicitado pelo Instagram"
-    return getpass.getpass("Digite o codigo recebido por " + source + ": ").strip()
+    return input("Digite o codigo recebido por " + source + ": ").strip()
 
 
 def migrate_identity(client, legacy_path):
@@ -1014,10 +1065,16 @@ def continue_two_factor(client, error):
     if not context:
         raise FlowError("O servidor pediu dois fatores, mas nao devolveu um contexto utilizavel. Conclua no aplicativo.")
     data["two_step_verification_context"] = context
-    code = getpass.getpass("Digite o codigo do autenticador/SMS ou codigo de backup solicitado: ").strip()
-    if not code:
-        raise FlowError("Codigo nao informado.")
-    return client._login_with_bloks_two_factor(code, data, error)
+    code, secret = parse_two_factor_input(input("Digite o codigo 2FA/backup ou cole a chave 2FA: "))
+    client._local_totp_secret = secret
+    if secret:
+        CONSOLE.info("Chave reconhecida. O codigo do autenticador sera gerado localmente no envio.")
+    try:
+        return client._login_with_bloks_two_factor(code, data, error)
+    finally:
+        client._local_totp_secret = None
+        secret = None
+        code = None
 
 
 def show_failure(diagnostic):
@@ -1058,6 +1115,7 @@ def show_flow():
     CONSOLE.detail("instagram_sessao_caa.json: sessao reaproveitada pelos outros comandos.")
     CONSOLE.section("Opcoes uteis")
     CONSOLE.detail('--limite 10  |  --saida resultado.json  |  --sem-cor  |  --help')
+    CONSOLE.detail("No 2FA: digite o codigo numerico ou cole a chave Base32, com ou sem espacos.")
     CONSOLE.detail("Login Android CAA/Bloks; biblioteca nao oficial instagrapi==" + CLIENT_VERSION + ".")
     print()
 

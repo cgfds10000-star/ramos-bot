@@ -9,15 +9,12 @@ export default function VerificationForm({api, sessionId, challenge, pending, on
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
   const [preview, setPreview] = useState(null);
-  const [entryMode, setEntryMode] = useState('code');
   const active = useRef(true);
   const inFlight = useRef(false);
-  const autoAttempted = useRef(false);
   const controller = useRef(null);
   const afterSend = useRef(onSubmitted);
   afterSend.current = onSubmitted;
-  const detectedKind = verificationInputKind(value, challenge.kind);
-  const kind = detectedKind === entryMode ? detectedKind : null;
+  const kind = verificationInputKind(value, challenge.kind);
   const acceptsSecret = acceptsAuthenticatorSecret(challenge.kind);
 
   useEffect(() => { active.current = true; return () => { active.current = false; controller.current?.abort(); }; }, []);
@@ -49,16 +46,19 @@ export default function VerificationForm({api, sessionId, challenge, pending, on
   const submit = useCallback(async () => {
     if (inFlight.current || sent || !active.current) return;
     inFlight.current = true;
-    autoAttempted.current = true;
     setSending(true); setError('');
     controller.current = new AbortController();
     let entered = value;
     setValue('');
     try {
-      const code = await resolveVerificationCode(entered, challenge.kind, {now: () => api.serverNow(), signal: controller.current.signal});
+      const body = kind === 'secret'
+        ? {secret: entered}
+        : {code: await resolveVerificationCode(entered, challenge.kind, {now: () => api.serverNow(), signal: controller.current.signal})};
       entered = '';
       if (!active.current) return;
-      await api.post(`/sessions/${sessionId}/input`, {code, challenge_id: challenge.id});
+      try {
+        await api.post(`/sessions/${sessionId}/input`, {...body, challenge_id: challenge.id});
+      } finally { delete body.secret; delete body.code; }
       if (active.current) { setSent(true); await afterSend.current?.(); }
     } catch (failure) {
       if (active.current && failure.name !== 'AbortError') setError(failure.message);
@@ -67,18 +67,12 @@ export default function VerificationForm({api, sessionId, challenge, pending, on
       inFlight.current = false;
       if (active.current) setSending(false);
     }
-  }, [api, challenge.id, challenge.kind, sessionId, value, sent]);
-
-  useEffect(() => {
-    if (kind !== 'secret' || pending || sending || sent || !online || autoAttempted.current) return;
-    const timer = setTimeout(submit, 1200);
-    return () => clearTimeout(timer);
-  }, [kind, value, pending, sending, sent, online, submit]);
+  }, [api, challenge.id, challenge.kind, sessionId, value, sent, kind]);
 
   return <form className="verification" onSubmit={event => { event.preventDefault(); if (!pending && online && kind) submit(); }}>
     <ShieldCheck size={21}/><div><strong>Verificação em duas etapas</strong>
-      <p>{entryMode === 'secret' ? 'Cole sua chave secreta Base32, com ou sem espaços, para gerar o código de 6 dígitos.' : challenge.message}</p>
-      <div className="verification-row"><input autoFocus type={entryMode === 'secret' ? 'password' : 'text'} autoComplete={entryMode === 'secret' ? 'off' : 'one-time-code'} inputMode={entryMode === 'secret' ? 'text' : 'numeric'} autoCapitalize={entryMode === 'secret' ? 'characters' : 'none'} spellCheck={false} maxLength={entryMode === 'secret' ? 256 : challenge.kind === 'authenticator' ? 6 : 8} aria-label={entryMode === 'secret' ? 'Chave secreta Base32' : 'Código de verificação'} placeholder={entryMode === 'secret' ? 'Chave secreta Base32' : '000000'} value={value} onChange={event => { setValue(event.target.value); setError(''); }} disabled={sending || sent} required/>
+      <p>{acceptsSecret ? 'Digite o codigo 2FA ou cole sua chave Base32 com espacos. O codigo e gerado automaticamente.' : challenge.message}</p>
+      <div className="verification-row"><input autoFocus type={kind === 'secret' ? 'password' : 'text'} autoComplete={acceptsSecret ? 'off' : 'one-time-code'} inputMode={acceptsSecret ? 'text' : 'numeric'} autoCapitalize={acceptsSecret ? 'characters' : 'none'} spellCheck={false} maxLength={acceptsSecret ? 256 : 8} aria-label={acceptsSecret ? 'Codigo ou chave 2FA' : 'Codigo de verificacao'} placeholder={acceptsSecret ? 'Codigo ou chave 2FA' : '000000'} value={value} onChange={event => { setValue(event.target.value); setError(''); }} disabled={sending || sent} required/>
         <button className="small-button" disabled={pending || sending || sent || !online || !kind}>{sending ? <LoaderCircle className="spin" size={17}/> : 'Confirmar'}</button>
       </div>
       {preview && kind === 'secret' && !sending && !sent && <div className="verification-totp">
@@ -86,8 +80,7 @@ export default function VerificationForm({api, sessionId, challenge, pending, on
         <output aria-label="Código 2FA gerado">{preview.code}</output>
         <span className="verification-totp-validity">Ativo · {preview.remaining}s</span>
       </div>}
-      <p className="verification-hint" aria-live="polite">{sent ? 'Código enviado. Aguardando o Instagram…' : sending ? 'Preparando e enviando o código 2FA…' : entryMode === 'secret' ? 'A chave é convertida aqui no navegador. Somente o código gerado é enviado automaticamente ao Instagram.' : 'Digite o código solicitado e toque em Confirmar.'}</p>
-      {acceptsSecret && <button type="button" className="text-button" disabled={sending || sent} onClick={() => { setEntryMode(mode => mode === 'code' ? 'secret' : 'code'); setValue(''); setError(''); setPreview(null); }}>{entryMode === 'secret' ? 'Digitar código' : 'Usar chave secreta'}</button>}
+      <p className="verification-hint" aria-live="polite">{sent ? 'Código enviado. Aguardando o Instagram…' : sending ? 'Preparando e enviando o código 2FA…' : kind === 'secret' ? 'Ao confirmar, o Railway gera o codigo no momento do envio. A chave nao e salva.' : 'Digite o codigo solicitado e toque em Confirmar.'}</p>
       {error && <div className="error-banner" role="alert">{error}</div>}
     </div>
   </form>;

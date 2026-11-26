@@ -65,3 +65,13 @@ test('trocar/encerrar o desafio cancela a geração pendente sem enviar códigos
   controller.abort();
   await assert.rejects(pending, {name: 'AbortError'});
 });
+
+
+test('campo unificado reconhece chave com grupos e rejeita sete digitos', async () => {
+  const grouped = 'GEZD-GNBV GY3T QOJQ GEZD GNBV GY3T QOJQ';
+  assert.equal(verificationInputKind(grouped, 'two_factor'), 'secret');
+  assert.equal(await generateTotp(grouped, 59000), '287082');
+  assert.equal(verificationInputKind('1234567', 'two_factor'), null);
+  assert.equal(verificationInputKind('1234567', 'code'), null);
+  assert.equal(verificationInputKind('abcd123456', 'two_factor'), null);
+});

@@ -1,10 +1,10 @@
 // RFC 4648 Base32 + RFC 6238, HMAC-SHA-1, intervalo de 30 segundos.
-// A chave é processada no navegador e nunca integra a requisição da API.
+// Preview local; o worker usa o mesmo nucleo Python para gerar o codigo no envio.
 const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const paddingByRemainder = {0: 0, 2: 6, 4: 4, 5: 3, 7: 1};
 
 export function decodeBase32(value) {
-  const input = String(value || '').replace(/\s+/g, '').toUpperCase();
+  const input = String(value || '').replace(/[\s-]+/g, '').toUpperCase();
   const match = /^([A-Z2-7]{16,128})(={0,6})$/.exec(input);
   if (!match) throw new Error('Informe uma chave Base32 válida, com pelo menos 16 caracteres.');
   const [, body, padding] = match;
@@ -32,8 +32,8 @@ export function acceptsAuthenticatorSecret(challengeKind) {
 }
 
 export function verificationInputKind(value, challengeKind) {
-  const clean = String(value || '').replace(/\s+/g, '');
-  const digits = challengeKind === 'authenticator' ? /^[0-9]{6}$/ : /^[0-9]{6,8}$/;
+  const clean = String(value || '').replace(/[\s-]+/g, '');
+  const digits = challengeKind === 'authenticator' ? /^[0-9]{6}$/ : /^(?:[0-9]{6}|[0-9]{8})$/;
   if (digits.test(clean)) return 'code';
   if (!acceptsAuthenticatorSecret(challengeKind)) return null;
   try { const bytes = decodeBase32(clean); bytes.fill(0); return 'secret'; }
@@ -67,7 +67,7 @@ function pause(milliseconds, signal) {
 export async function resolveVerificationCode(value, challengeKind, {now = Date.now, sleep = pause, signal} = {}) {
   signal?.throwIfAborted();
   const kind = verificationInputKind(value, challengeKind);
-  if (kind === 'code') return String(value).replace(/\s+/g, '');
+  if (kind === 'code') return String(value).replace(/[\s-]+/g, '');
   if (kind !== 'secret') throw new Error(acceptsAuthenticatorSecret(challengeKind)
     ? 'Informe a chave secreta Base32 ou o código 2FA solicitado pelo Instagram.'
     : 'Informe somente o código numérico recebido por SMS ou e-mail.');

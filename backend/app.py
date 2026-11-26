@@ -267,11 +267,14 @@ class RamosService:
             settings["two_factor_method"] = "auto"
         self.data['settings']['execution_mode'] = 'server'
         self.data['settings'].setdefault('continuous_execution', True)
-        initial_proxy = os.environ.get('RAMOS_INITIAL_PROXY', '')
-        if initial_proxy and not self.data.get('proxy_initialized_from_env'):
-            self.data['proxy'] = normalize_proxy(initial_proxy)
-            self.data['proxy_initialized_from_env'] = True
+        # Encerrar a configuracao antiga de saida pelo PC. A primeira versao
+        # deste fluxo volta a conexao direta do servidor, inclusive com /data
+        # persistente; RAMOS_INITIAL_PROXY nao reativa um relay antigo.
+        if self.data.get('egress_revision') != 'server-direct-v1':
+            self.data['proxy'] = ''
             self.data.pop('proxy_check', None)
+            self.data['proxy_initialized_from_env'] = True
+            self.data['egress_revision'] = 'server-direct-v1'
         if not self.data["sessions"]:
             self.data["sessions"].append(self.new_session())
         for session_id, plan in self.saved_runs.items():
@@ -629,12 +632,32 @@ class RamosService:
                 raise ApiError("Esse código já foi enviado. Aguarde a resposta do Instagram.", 409)
             if body.get("challenge_id") != challenge["id"]:
                 raise ApiError("Chegou uma nova solicitação de código. Digite o código mais recente.", 409)
-            code = re.sub(r"\D", "", str(body.get("code", "")))
-            if not re.fullmatch(r"[0-9]{6}" if challenge.get("kind") == "authenticator" else r"[0-9]{6,8}", code):
-                raise ApiError("Informe o código numérico de 6 a 8 dígitos.")
-            job["hidden"].append(code)
+            secret = body.get('secret')
+            if secret is not None:
+                if challenge.get('kind') not in {'authenticator', 'two_factor'} or not isinstance(secret, str) or len(secret) > 512:
+                    raise ApiError('Este desafio nao aceita uma chave de autenticador.')
+                from instagram_login_apk import parse_two_factor_input
+                try:
+                    _, normalized = parse_two_factor_input(secret, allow_backup=False)
+                except ValueError:
+                    raise ApiError('Chave 2FA invalida.') from None
+                except Exception:
+                    raise ApiError('Chave 2FA invalida.') from None
+                if not normalized:
+                    raise ApiError('Cole a chave Base32 ou use o campo de codigo numerico.')
+                entry = {'secret': normalized}
+                job['hidden'].extend([secret, normalized])
+            else:
+                raw_code = body.get('code', '')
+                if not isinstance(raw_code, str):
+                    raise ApiError('Informe o codigo numerico solicitado.')
+                code = re.sub(r'[\s-]+', '', raw_code)
+                if not re.fullmatch(r'[0-9]{6}' if challenge.get('kind') == 'authenticator' else r'(?:[0-9]{6}|[0-9]{8})', code):
+                    raise ApiError('Informe um codigo de 6 digitos ou backup de 8 digitos.')
+                entry = {'code': code}
+                job['hidden'].append(code)
             try:
-                job["process"].stdin.write(json.dumps({"code": code}) + "\n")
+                job["process"].stdin.write(json.dumps(entry) + "\n")
                 job["process"].stdin.flush()
             except (OSError, BrokenPipeError):
                 raise ApiError("A verificação foi encerrada. Conecte novamente.", 409) from None
@@ -1120,7 +1143,7 @@ class RamosHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             if urlsplit(self.path).path == "/api/health":
-                return self.reply(200, {"ok": True, "login_flow": "script-web-2fa-v2",
+                return self.reply(200, {"ok": True, "login_flow": "script-web-totp-v3",
                                         "revision": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "local")})
             path = urlsplit(self.path).path
             if path.startswith("/api/") or not os.environ.get("RAMOS_ADMIN_PASSWORD"):

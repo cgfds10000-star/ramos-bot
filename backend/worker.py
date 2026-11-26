@@ -30,16 +30,33 @@ def ask_code(kind="code", message="Informe o código enviado pelo Instagram."):
             payload = json.loads(line)
         except ValueError:
             payload = {}
-        raw = payload.get("code", "") if isinstance(payload, dict) else ""
-        value = re.sub(r"\D", "", str(raw))
+        raw = payload.get("secret", payload.get("code", "")) if isinstance(payload, dict) else ""
+        if not isinstance(raw, str):
+            raw = ""
+        if isinstance(payload, dict) and "secret" in payload:
+            if kind not in {"authenticator", "two_factor"}:
+                message = "Este metodo exige o codigo recebido por SMS ou e-mail."
+                continue
+            from instagram_login_apk import parse_two_factor_input
+            try:
+                _, secret = parse_two_factor_input(raw, allow_backup=False)
+            except ValueError:
+                secret = None
+            except Exception:
+                secret = None
+            if secret:
+                return secret
+            message = "Chave Base32 invalida. Confira a chave ou digite o codigo numerico."
+            continue
+        value = re.sub(r"[\s-]+", "", raw)
         if kind == "authenticator":
-            if len(value) == 6:
+            if re.fullmatch(r"[0-9]{6}", value):
                 return value
             message = "O autenticador precisa de exatamente 6 dígitos. Digite novamente."
-        elif 6 <= len(value) <= 8:
+        elif re.fullmatch(r"(?:[0-9]{6}|[0-9]{8})", value):
             return value
         else:
-            message = "Código inválido. Digite de 6 a 8 números."
+            message = "Código inválido. Digite 6 números ou um backup de 8 números."
     raise ValueError("Código inválido.")
 
 
@@ -84,7 +101,7 @@ ERRORS = {
 
 
 class _WebGetpass:
-    """O núcleo importa getpass; aqui ele nunca lê o terminal."""
+    """Adaptar input/getpass para eventos web sem substituir o fluxo do nucleo."""
 
     def __init__(self, initial_code=""):
         self.initial_code = initial_code
@@ -100,10 +117,13 @@ class _WebGetpass:
 
     def getpass(self, prompt="", *_args, **_kwargs):
         low = str(prompt).strip().lower()
-        if "app de autentica" in low:
-            return self.read("authenticator", "Digite os 6 dígitos do aplicativo autenticador e toque em Confirmar.")
-        if "autenticador" in low:
-            return self.read("two_factor", "Digite os 6 dígitos do autenticador, o código por SMS/e-mail ou um código de backup.")
+        if "depois de aprovar" in low:
+            from instagram_login_apk import FlowError
+            raise FlowError("O Instagram pediu aprovacao em outro aparelho. Conclua essa verificacao no aplicativo antes de conectar novamente.")
+        if "app de autentica" in low or "codigo ou chave do autenticador" in low:
+            return self.read("authenticator", "Digite o codigo de 6 digitos ou cole a chave 2FA com espacos.")
+        if "autenticador" in low or "2fa" in low or "backup" in low:
+            return self.read("two_factor", "Digite o codigo 2FA/backup ou cole a chave 2FA com espacos.")
         return self.read("code", "Digite o código que o Instagram enviou por SMS ou e-mail.")
 
 
@@ -117,10 +137,10 @@ def web_input(core, initial_code=""):
         "save_private_json": write_json,
         # Substituir o nome no módulo do núcleo: não existe fallback para o terminal.
         "getpass": reader,
-        "read_authenticator_code": lambda: reader.read("authenticator", "Digite os 6 dígitos do aplicativo autenticador e toque em Confirmar."),
-        "read_verification_code": lambda *_args, **_kwargs: reader.read("two_factor", "Digite o código que o Instagram enviou por SMS, e-mail ou o código de backup."),
+        "input": reader.getpass,
     }
-    previous = {name: getattr(core, name) for name in overrides}
+    missing = object()
+    previous = {name: getattr(core, name, missing) for name in overrides}
     try:
         for name, value in overrides.items():
             setattr(core, name, value)
@@ -128,7 +148,10 @@ def web_input(core, initial_code=""):
     finally:
         reader.initial_code = ""
         for name, value in previous.items():
-            setattr(core, name, value)
+            if value is missing:
+                delattr(core, name)
+            else:
+                setattr(core, name, value)
 
 
 def run(payload):
@@ -173,7 +196,7 @@ def _run(payload, core):
         if owner and owner.casefold() != handle.casefold():
             raise core.FlowError("A sessão salva pertence a outra conta.")
         if payload["mode"] == "login":
-            if client.user_id and (client.authorization or client.sessionid):
+            if not password and client.user_id and (client.authorization or client.sessionid):
                 try:
                     stage = "validando_sessao_existente"
                     core.validate_action_session(client, handle)

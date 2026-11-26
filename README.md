@@ -16,14 +16,14 @@ A primeira execução instala as dependências. O ZIP de entrega também inclui 
 - Criar, selecionar, pesquisar e remover sessões. O login abre em um popup com abas que podem ser deslizadas horizontalmente, arrastadas com o mouse ou selecionadas pelas setas do teclado.
 - Conectar com usuário/senha, importar um `login.txt` escolhido por você ou reutilizar uma sessão salva.
 - Quando o Instagram solicita 2FA no login, o popup pede o código e segue a mesma continuação automática do script Python, usando o contexto da mesma tentativa. O Instagram determina se é autenticador, SMS/e-mail ou código de backup. O código é informado na página e enviado uma única vez; a senha não é reenviada.
-- O login também aceita **Código 2FA (opcional)**. Você pode digitar o código numérico junto do usuário e da senha; ele é entregue uma única vez quando o script solicitar a verificação. Se o campo ficar vazio, o popup pede o código normalmente. O código não é salvo nem registrado nos logs. O núcleo Python é uma cópia exata do arquivo fornecido pelo usuário.
-- O popup 2FA abre com o campo numérico e o botão **Confirmar**. Ele continua aguardando enquanto você digita; o código manual só é enviado ao confirmar. Para converter uma chave Base32 localmente, escolha **Usar chave secreta**. Nesse modo, o TOTP aparece com o tempo de validade e é enviado após uma breve pausa. **Digitar código** volta ao preenchimento manual. A chave não é enviada ao backend nem salva. O horário acompanha o servidor; se o código estiver prestes a expirar, aguarda a próxima janela. O desafio nativo do autenticador aceita seis dígitos; SMS/e-mail e códigos de backup seguem o método solicitado. Não há reenvio automático após uma falha.
+- A tela inicial pede usuário e senha. O campo de 2FA aparece quando a mesma tentativa de login solicita verificação. O núcleo Python é uma cópia exata do arquivo fornecido pelo usuário; clientes antigos da API ainda podem fornecer `verification_code` numérico opcional.
+- O popup 2FA tem um campo único: digite o código ou cole a chave Base32 com espaços e toque em **Confirmar**. O site mostra uma prévia do TOTP. Ao confirmar uma chave, ela é entregue por HTTPS ao worker da mesma tentativa, que usa a lógica do script para gerar o código no instante do envio ao Instagram, depois das telas de preparação. Chave, código e senha não são gravados em disco nem aparecem no estado público ou nos logs. Não há envio automático durante a digitação nem repetição após falha. SMS/e-mail continuam aceitando somente o código recebido; backup aceita oito dígitos.
 - A opção de aprovação por outro aparelho foi removida. Quando o servidor não fornece um contexto de código compatível, a tentativa é encerrada e seu diagnóstico pode ser exportado. Isso não contorna verificações obrigatórias do Instagram.
 - `buscar "nome" --limite 10`, `buscar "nome" --geral`, `perfil usuario`, `perfil --id 123456`, `seguir usuario`, `seguir --id 123456`, `curtir URL_OU_ID`.
 - Macros iniciadas pelo usuário, interrupção e proxy. A atividade aparece na aba Logs; a tela de sessões não abre um terminal ou campo de comandos. O popup mantém login e 2FA.
 - Diagnóstico exportável sem senhas ou tokens. Escritas e códigos não são reenviados automaticamente.
 
-O núcleo usa o `instagram_login_apk.py` fornecido, com `instagrapi==3.2.19`. O arquivo Python é mantido sem mudanças na lógica de autenticação; o worker adapta a entrada do terminal para o popup e respeita o método de autenticação selecionado no painel. Uma sessão só aparece como conectada depois de ser validada pelo servidor do Instagram. Os testes usam processos e dados sintéticos; não houve login em uma conta real durante esta entrega.
+O núcleo usa o `instagram_login_apk.py` fornecido, com `instagrapi==3.2.19`. O arquivo Python corresponde à revisão fornecida com geração TOTP local (`caa-4-acoes-4-totp-local`); o worker adapta `input` e `getpass` do terminal para o popup e respeita o método de autenticação selecionado no painel. Uma sessão só aparece como conectada depois de ser validada pelo servidor do Instagram. Os testes usam processos e dados sintéticos; não houve login em uma conta real durante esta entrega.
 
 ## Fila do Viralize em Macros
 
@@ -92,10 +92,15 @@ A aba Proxy usa campos separados de host, porta, usuário e senha, com configura
 
 “Salvar e aplicar” verifica o IP pelo servidor usando HTTPS com ipify. “Verificar conexão” repete somente essa verificação. O IP exibido é o último observado, com data e hora; proxies rotativos podem mudar o IP entre conexões. Falhas do proxy encerram a chamada, sem repetir diretamente. A comunicação do navegador com o painel continua usando HTTPS normalmente.
 
-`RAMOS_INITIAL_PROXY` permite configurar o proxy inicial em uma variável protegida do servidor. Ele é importado uma única vez; alterações posteriores na aba persistem após reinícios. Não versione essa variável nem coloque credenciais no React.
+A saída padrão é a conexão direta do servidor Railway. Na primeira inicialização desta revisão, a configuração antiga de proxy/saída pelo PC é limpa, inclusive no volume persistente; `RAMOS_INITIAL_PROXY` não é mais importada. O painel não depende de um agente, túnel ou navegador do PC. A aba Proxy permanece disponível somente para uma nova configuração explícita posterior.
 
 ## Execução no servidor
 
 Configurações informa o modo `server`: todas as sessões selecionadas são enviadas ao servidor juntas ao tocar em Iniciar. Os processos e a fila continuam após a resposta HTTP e independem do navegador. Fechar a página ou perder a internet do celular não interrompe a rodada aceita pelo servidor. Ao reabrir o painel, o estado atual volta por `/api/state`. Em Configurações, Execução contínua mantém o executor esperando por novas tarefas e iniciando novas rodadas depois de alcançar o limite. A consulta à fila vazia aguarda 30 segundos e pode ser interrompida imediatamente. Desative essa opção antes de iniciar para executar apenas uma rodada. Erros da API, limites e verificações pausam a execução, sem repetir tentativas bloqueadas.
 
 O andamento e a chave da API ficam em `executions.json`, protegido com a mesma criptografia do servidor. Ao reiniciar, o servidor valida a sessão salva e retoma execuções que estavam aguardando ou entre tarefas, sem precisar do navegador. Uma ação interrompida durante aceite, execução ou confirmação fica pausada para revisão, sem reenvio automático. O botão Interromper cancela também a retomada futura. O servidor continua precisando de uma conexão própria ativa.
+
+
+## Verificar esta revisão do login
+
+`GET /api/health` identifica o fluxo `script-web-totp-v3` e o SHA implantado. Os testes cobrem o worker real com respostas externas simuladas, incluindo usuário/senha → desafio → chave Base32 agrupada → TOTP renovado no envio → sessão conectada, consumo único do desafio e ausência de segredos no disco/estado público. Não é executado login real durante os testes.

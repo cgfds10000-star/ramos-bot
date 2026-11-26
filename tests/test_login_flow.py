@@ -355,6 +355,38 @@ with ExitStack() as stack:
 
 
 class WorkerProtocolChecks(unittest.TestCase):
+    def test_grouped_secret_reaches_the_same_script_and_is_generated_at_submit(self):
+        from app import RamosService, ApiError
+        import time
+        public_secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'
+        formatted = ' '.join(public_secret[i:i+4] for i in range(0, len(public_secret), 4))
+        harness = WORKER_HARNESS.replace("code == '003754'", "code == '050471'")
+        harness = harness.replace('with ExitStack() as stack:', 'with ExitStack() as stack:\n    stack.enter_context(patch.object(core.time, "time", return_value=1111111111))')
+        with tempfile.TemporaryDirectory() as directory:
+            service = RamosService(directory, worker_command=[sys.executable, '-u', '-c', harness], dependency_check=lambda: True)
+            try:
+                sid = service.data['sessions'][0]['id']
+                service.start(sid, {'mode': 'login', 'username': 'teste', 'password': 'synthetic-password'})
+                deadline = time.monotonic() + 8
+                while not service.session(sid)['challenge'] and time.monotonic() < deadline:
+                    time.sleep(.01)
+                challenge = service.session(sid)['challenge']
+                self.assertIsNotNone(challenge)
+                body = {'challenge_id': challenge['id'], 'secret': formatted}
+                service.submit_input(sid, body)
+                with self.assertRaises(ApiError):
+                    service.submit_input(sid, body)
+                while sid in service.jobs and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertNotIn(sid, service.jobs)
+                self.assertTrue(service.session(sid)['authenticated'])
+                for secret in (formatted, public_secret, '050471', 'synthetic-password'):
+                    self.assertNotIn(secret, json.dumps(service.snapshot()))
+                    for path in Path(directory).rglob('*.json'):
+                        self.assertNotIn(secret, path.read_text())
+            finally:
+                service.close()
+
     def test_typed_code_reaches_real_worker_without_terminal_input_or_secret_in_logs(self):
         from app import RamosService, ApiError
         import time

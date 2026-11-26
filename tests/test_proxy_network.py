@@ -170,15 +170,25 @@ class ProxyChecks(unittest.TestCase):
                 self.assertNotIn('synthetic-password', json.dumps(result))
             finally: service.close()
 
-    def test_initial_proxy_is_imported_only_once_and_ui_changes_survive_restart(self):
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'RAMOS_INITIAL_PROXY': 'host.example:80:user:pass'}):
+    def test_legacy_pc_proxy_and_environment_do_not_override_server_connection(self):
+        from storage import read_json, write_json
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'RAMOS_INITIAL_PROXY': '127.0.0.1:8899'}):
             service = RamosService(directory)
-            self.assertTrue(service.snapshot()['proxy']['enabled'])
-            service.mutate('POST', ['proxy'], {'enabled': False})
+            self.assertFalse(service.snapshot()['proxy']['enabled'])
             service.close()
+            path = Path(directory) / 'state.json'
+            data = read_json(path)
+            data.pop('egress_revision', None)
+            data['proxy'] = 'http://127.0.0.1:8899'
+            data['proxy_check'] = {'ip': '127.0.0.1'}
+            write_json(path, data)
             restored = RamosService(directory)
-            try: self.assertFalse(restored.snapshot()['proxy']['enabled'])
-            finally: restored.close()
+            try:
+                self.assertFalse(restored.snapshot()['proxy']['enabled'])
+                self.assertEqual(restored.data['proxy'], '')
+                self.assertNotIn('proxy_check', restored.data)
+            finally:
+                restored.close()
 
     def test_proxy_cannot_change_in_the_gap_between_viralize_tasks(self):
         with tempfile.TemporaryDirectory() as directory:
