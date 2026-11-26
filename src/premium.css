@@ -54,3 +54,14 @@ body,.panel-access{background:#0b0a12 url('/ramos-background.png') center top/co
 .access-glow{display:none}
 .access-card,.modal{background:var(--ramos-lines),linear-gradient(145deg,#291334,#140b20)}
 @media(max-width:360px){.header-actions .icon-button::before{width:max(36px,100%);height:max(36px,100%)}.session-row{gap:calc(18 * var(--u))}.session-open>span{font-size:calc(22 * var(--u))}}
+
+/* Native-style touch targets: keep editing available inside text fields. */
+body{-webkit-tap-highlight-color:transparent}
+.app-shell{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.app-shell :is(input,textarea){-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
+.app-shell :is(img,svg){-webkit-user-drag:none;user-select:none;pointer-events:none}
+#root>.app-shell>nav.bottom-nav button{border-color:#795c8b}
+#root>.app-shell>nav.bottom-nav button.active{border:2px solid #f6e9ff;outline:2px solid #a994b6;outline-offset:2px;box-shadow:inset 0 1px 8px #ec9aff88,0 0 0 5px #33243e}
+#root>.app-shell>nav.bottom-nav button:focus-visible{outline-color:#f4ccff;outline-offset:3px}
+.app-shell :is(.macro-start-button,.macro-apply-button,.proxy-save,.primary-button){outline:2px solid #9f83ac;outline-offset:2px}
+.app-shell :is(.macro-start-button,.macro-apply-button,.proxy-save,.primary-button):focus-visible{outline-color:#f4ccff;outline-offset:4px}

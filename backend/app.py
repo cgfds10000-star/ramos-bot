@@ -26,6 +26,7 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import Request
 import uuid
 from storage import read_json as storage_read, write_json
+from workspaces import BrowserWorkspaces
 from network import OutboundOpener, check_proxy_ip, normalize_proxy, proxy_fields_url
 from mobile_session import normalize_mobile_session, validate_mobile_session, MobileSessionError
 
@@ -1121,7 +1122,7 @@ class RamosHandler(BaseHTTPRequestHandler):
     def allowed_origin(self):
         origin = self.headers.get("Origin")
         same_host = urlsplit(origin or "").netloc == self.headers.get("Host", "")
-        return origin is None or origin in self.server.allowed_origins or (bool(os.environ.get("RAMOS_ADMIN_PASSWORD")) and same_host)
+        return origin is None or origin in self.server.allowed_origins or (urlsplit(origin or "").scheme in {"http", "https"} and same_host)
 
     def reply(self, code, value, cookie=None):
         encoded = json.dumps(value, ensure_ascii=False).encode("utf-8")
@@ -1130,15 +1131,34 @@ class RamosHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(encoded)))
-        if cookie:
-            self.send_header("Set-Cookie", cookie)
+        if cookie or getattr(self, 'workspace_cookie', None):
+            self.send_header("Set-Cookie", cookie or self.workspace_cookie)
         if self.headers.get("Origin") in self.server.allowed_origins:
             self.send_header("Access-Control-Allow-Origin", self.headers["Origin"])
             self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(encoded)
 
-    def access(self, mutation=False):
+    def access(self, mutation=False, create=False):
+        if not self.allowed_origin():
+            raise ApiError("Origem não autorizada.", 403)
+        if self.server.workspaces is not None:
+            try:
+                token = SimpleCookie(self.headers.get('Cookie', '')).get('ramos_access')
+                token = token.value if token else ''
+            except CookieError:
+                token = ''
+            resolved = self.server.workspaces.resolve(token, create=create)
+            if resolved is None:
+                raise ApiError('Abra o painel neste navegador antes de continuar.', 403)
+            self.request_service, value = resolved
+            secure = '; Secure' if self.headers.get('X-Forwarded-Proto') == 'https' or os.environ.get('RAMOS_HOST') == '0.0.0.0' else ''
+            self.workspace_cookie = 'ramos_access=' + value + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000' + secure
+            if mutation and not hmac.compare_digest(self.headers.get('X-Ramos-CSRF', ''), self.request_service.csrf):
+                raise ApiError('Atualize a página antes de continuar.', 403)
+            return
+        # Explicit single-service mode is retained for local tools and tests.
+        self.request_service = self.server.service
         host = urlsplit("http://" + self.headers.get("Host", "")).hostname
         api_key = os.environ.get("RAMOS_API_KEY", "")
         admin_password = os.environ.get("RAMOS_ADMIN_PASSWORD", "")
@@ -1202,20 +1222,22 @@ class RamosHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        self.workspace_cookie = None
         try:
             if urlsplit(self.path).path == "/api/health":
                 return self.reply(200, {"ok": True, "login_flow": "script-web-dart-http2-v5",
+                                        "browser_isolation": self.server.workspaces is not None,
                                         "revision": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "local")})
             path = urlsplit(self.path).path
-            if path.startswith("/api/") or not os.environ.get("RAMOS_ADMIN_PASSWORD"):
-                self.access()
+            if path.startswith("/api/"):
+                self.access(create=path == '/api/state')
             if path == "/api/state":
-                return self.reply(200, self.server.service.snapshot())
+                return self.reply(200, self.request_service.snapshot())
             if path.startswith("/api/diagnostic/"):
-                session = self.server.service.session(path.rsplit("/", 1)[-1])
+                session = self.request_service.session(path.rsplit("/", 1)[-1])
                 if not session.get("account_id"):
                     raise ApiError("Nenhuma tentativa nesta sessão.", 404)
-                diagnostic = self.server.service.directory / "accounts" / session["account_id"] / "diagnostic.json"
+                diagnostic = self.request_service.directory / "accounts" / session["account_id"] / "diagnostic.json"
                 if not diagnostic.is_file():
                     raise ApiError("O diagnóstico ficará disponível ao concluir a tentativa.", 404)
                 return self.reply(200, storage_read(diagnostic))
@@ -1230,6 +1252,8 @@ class RamosHandler(BaseHTTPRequestHandler):
             if not requested.is_file():
                 raise ApiError("A interface ainda não foi compilada. Execute npm run build ou use o servidor de desenvolvimento.", 503)
             import mimetypes
+            if requested.name == 'index.html':
+                self.access(create=True)
             data = requested.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", mimetypes.guess_type(requested.name)[0] or "application/octet-stream")
@@ -1237,6 +1261,8 @@ class RamosHandler(BaseHTTPRequestHandler):
             if requested.name == "index.html":
                 self.send_header("Cache-Control", "no-cache")
             self.send_header("Content-Length", str(len(data)))
+            if self.workspace_cookie:
+                self.send_header('Set-Cookie', self.workspace_cookie)
             self.end_headers()
             self.wfile.write(data)
         except ApiError as error:
@@ -1245,6 +1271,7 @@ class RamosHandler(BaseHTTPRequestHandler):
             self.reply(500, {"error": "Não foi possível ler os dados do servidor."})
 
     def mutation(self, method):
+        self.workspace_cookie = None
         try:
             self.access(mutation=True)
             if not self.headers.get("Content-Type", "").startswith("application/json"):
@@ -1264,7 +1291,7 @@ class RamosHandler(BaseHTTPRequestHandler):
             path = urlsplit(self.path).path
             if not path.startswith("/api/"):
                 raise ApiError("Operação não encontrada.", 404)
-            result = self.server.service.mutate(method, path[5:].strip("/").split("/"), body)
+            result = self.request_service.mutate(method, path[5:].strip("/").split("/"), body)
             self.reply(200, result)
         except ApiError as error:
             self.reply(error.status, {"error": str(error)})
@@ -1272,7 +1299,7 @@ class RamosHandler(BaseHTTPRequestHandler):
             self.reply(500, {"error": "Não foi possível salvar esta alteração."})
 
     def do_POST(self):
-        if urlsplit(self.path).path == "/api/access/login":
+        if self.server.workspaces is None and urlsplit(self.path).path == "/api/access/login":
             return self.panel_login()
         self.mutation("POST")
 
@@ -1283,34 +1310,38 @@ class RamosHandler(BaseHTTPRequestHandler):
 def make_server(service, port=8765):
     server = ThreadingHTTPServer((os.environ.get("RAMOS_HOST", "127.0.0.1"), port), RamosHandler)
     server.daemon_threads = True
-    server.service = service
+    server.workspaces = service if isinstance(service, BrowserWorkspaces) else None
+    server.service = None if server.workspaces is not None else service
     actual_port = server.server_address[1]
     server.allowed_origins = {f"http://{host}:{number}" for host in ("localhost", "127.0.0.1") for number in (actual_port, 5178, 4178, 5173, 4173)}
     return server
+
+
+def valid_legacy_cookie(token):
+    if not os.environ.get('RAMOS_ADMIN_PASSWORD'):
+        return False
+    try:
+        expiry, nonce, signature = token.split('.')
+        key = (os.environ['RAMOS_ADMIN_PASSWORD'] + os.environ.get('RAMOS_ENCRYPTION_KEY', '')).encode()
+        expected = hmac.new(key, (expiry + '.' + nonce).encode(), hashlib.sha256).hexdigest()
+        return int(expiry) > time.time() and hmac.compare_digest(signature, expected)
+    except (ValueError, TypeError):
+        return False
 
 
 def main():
     parser = argparse.ArgumentParser(description="Servidor local do Ramos Bot")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8765")))
     args = parser.parse_args()
-    if (os.environ.get("RAMOS_API_KEY") or os.environ.get("RAMOS_ADMIN_PASSWORD")) and not os.environ.get("RAMOS_ENCRYPTION_KEY"):
-        raise RuntimeError("Configure RAMOS_ENCRYPTION_KEY antes de publicar o servidor.")
-    if os.environ.get("RAMOS_HOST", "127.0.0.1") not in {"127.0.0.1", "localhost", "::1"} and not (os.environ.get("RAMOS_API_KEY") or os.environ.get("RAMOS_ADMIN_PASSWORD")):
-        raise RuntimeError("Configure RAMOS_ADMIN_PASSWORD para expor o painel com autenticação.")
-    service = RamosService()
-    if service.data.get('proxy'):
-        def check_initial_proxy():
-            try:
-                result = service.check_proxy()
-            except ApiError:
-                return
-            print(json.dumps({'event': 'ramos_proxy_check', **result['check']}, ensure_ascii=False), flush=True)
-        threading.Thread(target=check_initial_proxy, daemon=True).start()
-    server = make_server(service, args.port)
-    service.resume_runs()
-    print(json.dumps({'event': 'ramos_executor_ready', 'mode': 'server',
-                      'continuous_default': service.data['settings']['continuous_execution'],
-                      'saved_executions': len(service.saved_runs),
+    if os.environ.get('RAMOS_HOST', '127.0.0.1') not in {'127.0.0.1', 'localhost', '::1'} and not os.environ.get('RAMOS_ENCRYPTION_KEY'):
+        raise RuntimeError('Configure RAMOS_ENCRYPTION_KEY para proteger os dados dos navegadores no servidor.')
+
+
+    directory = os.environ.get('RAMOS_DATA_DIR', ROOT / 'data')
+    workspaces = BrowserWorkspaces(directory, RamosService, valid_legacy_cookie)
+    workspaces.resume_saved()
+    server = make_server(workspaces, args.port)
+    print(json.dumps({'event': 'ramos_executor_ready', 'mode': 'server', 'browser_isolation': True,
                       'encrypted_storage': bool(os.environ.get('RAMOS_ENCRYPTION_KEY'))}), flush=True)
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown, daemon=True).start())
     print(f"Ramos Bot: http://127.0.0.1:{server.server_address[1]}", flush=True)
@@ -1319,7 +1350,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        service.close()
+        workspaces.close()
         server.server_close()
 
 

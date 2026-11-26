@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Bot, CalendarDays, Download, Eye, EyeOff, Fingerprint, Instagram, KeyRound, Link2, List, LoaderCircle, Monitor, Play, Plus, Power, Search, Settings, ShieldCheck, Square, Trash2, UsersRound, Workflow, X } from 'lucide-react';
+import { Bot, CalendarDays, Download, Eye, EyeOff, Instagram, KeyRound, Link2, List, Monitor, Play, Plus, Power, Search, Settings, ShieldCheck, Square, Trash2, UsersRound, Workflow, X } from 'lucide-react';
 import { RamosApi, parseCommand, selectSession, sessionBusy, executionActive } from './api.js';
 import MacrosPage from './MacrosPage.jsx';
 import LogsPage from './LogsPage.jsx';
@@ -45,8 +45,6 @@ function App() {
   const [showApiKey, setShowApiKey] = useState(false);
   const validApiKey = VIRALIZE_KEY_PATTERN.test(apiKey.trim());
   const apiKeyLocked = macroBusy || Object.values(state.viralize || {}).some(executionActive);
-  const [accessLocked, setAccessLocked] = useState(false);
-  const [panelPassword, setPanelPassword] = useState('');
   const [filter, setFilter] = useState('');
   const [macroName, setMacroName] = useState('');
   const [macroText, setMacroText] = useState('');
@@ -59,12 +57,11 @@ function App() {
     read: () => api.state(),
     onState: (next, showError) => {
       if (next.csrf) api.csrf = next.csrf;
-      setState(next); setOnline(true); setAccessLocked(false); setChecking(false);
+      setState(next); setOnline(true); setChecking(false);
       if (showError) setError('');
     },
     onError: (failure, showError) => {
       setOnline(false); setChecking(false);
-      if (failure.locked) setAccessLocked(true);
       if (showError) setError(failure.message);
     },
   });
@@ -180,9 +177,9 @@ function App() {
 
   const title = { proxy: 'Proxy', 'command-macros': 'Sequências de comandos', logs: 'Logs', settings: 'Configurações', menu: 'Sua sessão', delete: 'Remover sessão?' }[panel];
 
-  if (accessLocked) return <div className="panel-access"><div className="access-glow"/><div className="access-brand"><span>R</span>RAMOS BOT</div><form className="access-card" onSubmit={event => { event.preventDefault(); const entered = panelPassword; setPanelPassword(''); act(() => api.post('/access/login', {password:entered})); }}><div className="access-icon"><ShieldCheck size={30}/></div><span className="eyebrow">SEU ESPAÇO DE TRABALHO</span><h1>Bem-vindo ao<br/><span>Ramos Bot.</span></h1><p>Entre para gerenciar suas sessões e contas.</p><label>Senha do painel<input type="password" autoComplete="current-password" placeholder="Digite sua senha" value={panelPassword} onChange={event => setPanelPassword(event.target.value)} required maxLength={200}/></label><button className="primary-button" disabled={pending || !panelPassword}>{pending ? <LoaderCircle className="spin" size={20}/> : <Fingerprint size={20}/>}Entrar no painel</button>{error && <div className="error-banner" role="alert">{error}</div>}<span className="access-footnote"><ShieldCheck size={14}/>Acesso protegido</span></form></div>;
 
-  return <div className={`app-shell ${page === 'sessions' ? 'is-home' : `is-${page}`}`}>
+
+  return <div className={`app-shell ${page === 'sessions' ? 'is-home' : `is-${page}`}`} onContextMenu={event => { if (!event.target.closest('input, textarea, select')) event.preventDefault(); }}>
     <header className="header" inert={Boolean(panel)}>
       <a className="brand" href="#" onClick={event => { event.preventDefault(); setPanel(null); setPage('sessions'); }} aria-label="Ramos Bot, início"><span className="brand-mark"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M5 5h24c20 0 20 26 3 26l14 14H32L14 26h14c9 0 9-11 0-11H15z" fill="currentColor"/><path d="M6 15l10 10v20H6z" fill="#00c8ed"/></svg></span><span>RAMOS <strong>BOT</strong></span></a>
     </header>
@@ -203,7 +200,6 @@ function App() {
       </section>
       {error && <div className="error-banner" role="alert">{error}</div>}
     </main> : <main inert={Boolean(panel)}>
-      <section className="welcome"><h1>Bem-vindo, <span>Carlos</span></h1><p>Gerencie suas sessões, contas, proxy e macros.</p></section>
       <section className="stats" aria-label="Resumo do Ramos Bot">
         <button onClick={() => { setPage('sessions'); setPanel(null); }}><Monitor/><span>Sessões</span><strong>{state.sessions.length}</strong></button>
         <button onClick={() => openPanel('accounts')}><Link2/><span>Contas abertas</span><strong>{state.sessions.filter(item => item.authenticated).length}</strong></button>

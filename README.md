@@ -101,7 +101,7 @@ npm test
 
 ## Executar em um servidor próprio
 
-O `Dockerfile` compila o React e executa o Python no mesmo serviço. Ao expor o painel, configure `RAMOS_ADMIN_PASSWORD` e `RAMOS_ENCRYPTION_KEY`; o servidor recusa inicializar publicamente sem proteção. O acesso ao painel usa a senha configurada no formulário da própria página. Depois, o login do Instagram e o código 2FA são informados dentro da sessão. Não há janela de autenticação do navegador. Utilize HTTPS no proxy de entrada.
+O `Dockerfile` compila o React e executa o Python no mesmo serviço. Configure `RAMOS_ENCRYPTION_KEY` ao publicar e use HTTPS. O painel abre sem senha e recebe um cookie assinado `ramos_access`, HttpOnly, Secure e SameSite=Strict. Cada navegador tem seu próprio armazenamento no servidor: contas, sessões, macros, proxy e execuções ficam separados. O cookie também identifica o espaço do aplicativo Flutter, sem mudar o fluxo de login local do Instagram.
 
 Gere a chave de criptografia com:
 
@@ -111,7 +111,9 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 Monte um volume persistente em `/data`. A chave de criptografia precisa permanecer a mesma entre reinicializações. Com a chave configurada, os dados e sessões são gravados com Fernet. No uso local sem chave, os arquivos ficam privados na pasta `data`; senhas e códigos não são gravados em disco. A remoção de uma conta apaga a sessão salva. Logs ficam em memória e podem ser exportados antes de reiniciar.
 
-`RAMOS_API_KEY` é uma alternativa para acesso por proxy privado. Nunca coloque segredos em variáveis `VITE_*`, no código React ou no repositório.
+Os dados de novos navegadores ficam em `/data/browsers/ID`. O índice fica protegido pela mesma criptografia do volume. A janela anônima recebe outro espaço; ao perder o cookie, um novo acesso começa vazio. As execuções salvas continuam no servidor e são retomadas após reinício mesmo sem o navegador aberto. Não coloque segredos em variáveis `VITE_*`, no código React ou no repositório.
+
+Na atualização de um volume antigo, os arquivos compartilhados existentes são preservados. O primeiro cookie antigo ainda válido e assinado recupera esse armazenamento; novos visitantes e outros cookies antigos recebem espaços diferentes. `RAMOS_ADMIN_PASSWORD` deve permanecer configurada durante essa migração para validar o cookie antigo, mas não exige mais senha na interface. Não apague os cookies do navegador original antes de abrir a versão nova. O token geral `RAMOS_API_KEY` não permite acessar os espaços de outros navegadores no servidor publicado.
 
 ## Proxy das sessões
 
