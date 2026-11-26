@@ -150,6 +150,8 @@ void main() {
           image.dispose();
         });
       }
+      await tester.ensureVisible(find.byTooltip('Remover @teste'));
+      await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Remover @teste'));
       await tester.pumpAndSettle();
       expect(api.writes, isEmpty);

@@ -283,10 +283,9 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
       return;
     }
     popup = true;
-    final result = await showModalBottomSheet<String>(
+    final result = await showDialog<String>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
+      barrierColor: const Color(0xB3000000),
       builder: (_) => AccountsPopup(
         api: api!,
         vault: vault,

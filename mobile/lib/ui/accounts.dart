@@ -95,173 +95,206 @@ class _AccountsPopupState extends State<AccountsPopup> {
       }
     }
     final free = sessions.where((s) => s['authenticated'] != true);
-    return Padding(
-      padding: EdgeInsets.only(
-        top: 70,
-        bottom: MediaQuery.viewInsetsOf(context).bottom,
-      ),
-      child: ClipRRect(
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
-        child: RamosTexture(
-          child: SafeArea(
-            top: false,
-            child: ListView(
-              shrinkWrap: true,
-              padding: const EdgeInsets.all(22),
+    return PopScope(
+      canPop: !busy,
+      child: Dialog(
+        alignment: Alignment.center,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 28),
+        backgroundColor: ink,
+        elevation: 24,
+        shadowColor: const Color(0x80000000),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(26),
+          side: const BorderSide(color: Color(0xFF85509E), width: 1.2),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 440,
+            maxHeight: MediaQuery.sizeOf(context).height * .78,
+          ),
+          child: RamosTexture(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.manage_accounts_outlined,
-                      color: purple,
-                      size: 28,
-                    ),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Text(
-                        'Contas e logins',
-                        style: TextStyle(
-                          fontSize: 23,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 12, 0),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.manage_accounts_outlined,
+                        color: purple,
+                        size: 28,
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Contas e logins',
+                          style: TextStyle(
+                            fontSize: 23,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Fechar',
+                        onPressed: busy ? null : () => Navigator.pop(context),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(22, 0, 22, 0),
+                  child: Text(
+                    'Faça o login no celular e use a mesma sessão no site.',
+                    style: TextStyle(color: muted, height: 1.5),
+                  ),
+                ),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+                    children: [
+                      const SizedBox(height: 22),
+                      GlowButton(
+                        'Adicionar login',
+                        icon: Icons.person_add_alt_1_outlined,
+                        onPressed: busy
+                            ? null
+                            : () => Navigator.pop(
+                                context,
+                                free.isEmpty
+                                    ? '__new__'
+                                    : free.first['id'].toString(),
+                              ),
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        'MINHAS SESSÕES (${sessions.length})',
+                        style: const TextStyle(
+                          color: muted,
+                          fontSize: 12,
+                          letterSpacing: 1.3,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                    ),
-                    IconButton(
-                      tooltip: 'Fechar',
-                      onPressed: busy ? null : () => Navigator.pop(context),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
-                ),
-                const Text(
-                  'Faça o login no celular e use a mesma sessão no site.',
-                  style: TextStyle(color: muted, height: 1.5),
-                ),
-                const SizedBox(height: 22),
-                GlowButton(
-                  'Adicionar login',
-                  icon: Icons.person_add_alt_1_outlined,
-                  onPressed: busy
-                      ? null
-                      : () => Navigator.pop(
-                          context,
-                          free.isEmpty
-                              ? '__new__'
-                              : free.first['id'].toString(),
-                        ),
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  'MINHAS SESSÕES (${sessions.length})',
-                  style: const TextStyle(
-                    color: muted,
-                    fontSize: 12,
-                    letterSpacing: 1.3,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                for (final session in sessions)
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: const Color(0xFF503464)),
-                      borderRadius: BorderRadius.circular(20),
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF25192E), Color(0xFF120F1C)],
-                      ),
-                    ),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 7,
-                      ),
-                      leading: const Icon(
-                        Icons.desktop_windows_outlined,
-                        color: muted,
-                      ),
-                      title: Text(
-                        session['name'].toString(),
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      subtitle: Text(
-                        session['authenticated'] == true
-                            ? '@${accounts.where((a) => a['id'] == session['account_id']).map((a) => a['username']).firstOrNull ?? ''} · Conectada'
-                            : object(
-                                    widget.vault.login(
-                                      session['id'].toString(),
-                                    )?['client'],
-                                  )['owner']?.toString() ??
-                                  'Pronta para receber um login',
-                        style: const TextStyle(color: muted, fontSize: 12),
-                      ),
-                      trailing: Icon(
-                        session['authenticated'] == true
-                            ? Icons.check_circle_outline
-                            : Icons.login,
-                        color: session['authenticated'] == true
-                            ? const Color(0xFF64D4BB)
-                            : purple,
-                      ),
-                      onTap: busy
-                          ? null
-                          : () => Navigator.pop(
-                              context,
-                              session['id'].toString(),
+                      const SizedBox(height: 10),
+                      for (final session in sessions)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: const Color(0xFF503464)),
+                            borderRadius: BorderRadius.circular(20),
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF25192E), Color(0xFF120F1C)],
                             ),
-                    ),
-                  ),
-                TextButton.icon(
-                  onPressed: busy
-                      ? null
-                      : () => Navigator.pop(context, '__new__'),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Criar outra sessão'),
-                ),
-                if (accounts.isNotEmpty) ...[
-                  const SizedBox(height: 18),
-                  const Text(
-                    'LOGINS ARMAZENADOS',
-                    style: TextStyle(
-                      color: muted,
-                      fontSize: 12,
-                      letterSpacing: 1.3,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  for (final account in accounts)
-                    ListTile(
-                      leading: const CircleAvatar(
-                        backgroundColor: Color(0xFF3B194E),
-                        child: Icon(Icons.person_outline, color: Colors.white),
-                      ),
-                      title: Text('@${account['username']}'),
-                      onTap: busy
-                          ? null
-                          : () => Navigator.pop(
-                              context,
-                              'account:${account['username']}',
+                          ),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 7,
                             ),
-                      subtitle: Text(
-                        account['has_session'] == true
-                            ? 'Sessão salva'
-                            : 'Aguardando login',
-                        style: const TextStyle(color: muted),
-                      ),
-                      trailing: IconButton(
-                        tooltip: 'Remover @${account['username']}',
-                        onPressed: busy ? null : () => remove(account),
-                        icon: const Icon(
-                          Icons.delete_outline,
-                          color: Color(0xFFFF8AA5),
+                            leading: const Icon(
+                              Icons.desktop_windows_outlined,
+                              color: muted,
+                            ),
+                            title: Text(
+                              session['name'].toString(),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            subtitle: Text(
+                              session['authenticated'] == true
+                                  ? '@${accounts.where((a) => a['id'] == session['account_id']).map((a) => a['username']).firstOrNull ?? ''} · Conectada'
+                                  : object(
+                                          widget.vault.login(
+                                            session['id'].toString(),
+                                          )?['client'],
+                                        )['owner']?.toString() ??
+                                        'Pronta para receber um login',
+                              style: const TextStyle(
+                                color: muted,
+                                fontSize: 12,
+                              ),
+                            ),
+                            trailing: Icon(
+                              session['authenticated'] == true
+                                  ? Icons.check_circle_outline
+                                  : Icons.login,
+                              color: session['authenticated'] == true
+                                  ? const Color(0xFF64D4BB)
+                                  : purple,
+                            ),
+                            onTap: busy
+                                ? null
+                                : () => Navigator.pop(
+                                    context,
+                                    session['id'].toString(),
+                                  ),
+                          ),
                         ),
+                      TextButton.icon(
+                        onPressed: busy
+                            ? null
+                            : () => Navigator.pop(context, '__new__'),
+                        icon: const Icon(Icons.add),
+                        label: const Text('Criar outra sessão'),
                       ),
-                    ),
-                ],
-                if (busy)
-                  const Center(child: CircularProgressIndicator(color: purple)),
-                if (error.isNotEmpty) MessageBox(error, error: true),
+                      if (accounts.isNotEmpty) ...[
+                        const SizedBox(height: 18),
+                        const Text(
+                          'LOGINS ARMAZENADOS',
+                          style: TextStyle(
+                            color: muted,
+                            fontSize: 12,
+                            letterSpacing: 1.3,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        for (final account in accounts)
+                          ListTile(
+                            leading: const CircleAvatar(
+                              backgroundColor: Color(0xFF3B194E),
+                              child: Icon(
+                                Icons.person_outline,
+                                color: Colors.white,
+                              ),
+                            ),
+                            title: Text('@${account['username']}'),
+                            onTap: busy
+                                ? null
+                                : () => Navigator.pop(
+                                    context,
+                                    'account:${account['username']}',
+                                  ),
+                            subtitle: Text(
+                              account['has_session'] == true
+                                  ? 'Sessão salva'
+                                  : 'Aguardando login',
+                              style: const TextStyle(color: muted),
+                            ),
+                            trailing: IconButton(
+                              tooltip: 'Remover @${account['username']}',
+                              onPressed: busy ? null : () => remove(account),
+                              icon: const Icon(
+                                Icons.delete_outline,
+                                color: Color(0xFFFF8AA5),
+                              ),
+                            ),
+                          ),
+                      ],
+                      if (busy)
+                        const Center(
+                          child: CircularProgressIndicator(color: purple),
+                        ),
+                      if (error.isNotEmpty) MessageBox(error, error: true),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
