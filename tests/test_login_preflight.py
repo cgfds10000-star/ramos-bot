@@ -8,6 +8,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from requests import Response
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 from Cryptodome.PublicKey import RSA
@@ -81,6 +82,45 @@ class PasswordPreflightChecks(unittest.TestCase):
             with self.subTest(status=status, headers=list(headers)):
                 self.assertIsNone(core.password_key_from_response(SimpleNamespace(status_code=status, headers=headers)))
 
+    def test_web_key_request_uses_caa_url_and_host_without_credentials(self):
+        self.client.password_key_domain = 'b.i.instagram.com'
+        self.client.private.headers['Authorization'] = 'synthetic-stale-authorization'
+        requests = []
+
+        def transport(request, **_kwargs):
+            requests.append(request)
+            response = Response()
+            response.status_code = 200 if request.url == 'https://b.i.instagram.com/api/v1/launcher/sync/' else 401
+            response._content = b'{"status":"ok"}'
+            response.url = request.url
+            response.request = request
+            response.headers.update(self.headers if response.status_code == 200 else {})
+            return response
+
+        with patch.object(self.client.private, 'send', side_effect=transport):
+            encrypted = self.client.password_encrypt('synthetic-password')
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].method, 'POST')
+        self.assertEqual(requests[0].headers['Host'], 'b.i.instagram.com')
+        self.assertNotIn('Authorization', requests[0].headers)
+        self.assertNotIn('synthetic-password', requests[0].body)
+        self.assertTrue(encrypted.startswith('#PWD_INSTAGRAM:4:'))
+        self.assertEqual(self.client.password_key_source, 'launcher_sync_caa')
+        self.assertEqual(self.client.login_trace[-1]['etapa'], 'chave_criptografia_senha')
+        self.assertEqual(self.client.login_trace[-1]['dominio'], 'b.i.instagram.com')
+
+    def test_web_key_refusal_stops_before_encrypting_without_trying_another_host(self):
+        self.client.password_key_domain = 'b.i.instagram.com'
+        response = Response()
+        response.status_code = 401
+        # Uma resposta recusada não é aceita como preparação válida.
+        response.headers.update(self.headers)
+        with patch.object(self.client, '_send_private_request', side_effect=lambda *_a, **_k: setattr(self.client, 'last_response', response)) as send:
+            with self.assertRaises(ClientError):
+                self.client.password_encrypt('synthetic-password')
+        send.assert_called_once()
+        self.assertEqual(send.call_args.kwargs['domain'], 'b.i.instagram.com')
+
 
 class SavedLoginProfileChecks(unittest.TestCase):
     def test_web_restores_device_ids_but_uses_the_same_transport_as_the_working_script(self):
@@ -92,7 +132,7 @@ class SavedLoginProfileChecks(unittest.TestCase):
             observed = []
 
             def login(client, handle, password):
-                observed.append((client.private_transport, client.phone_id, handle))
+                observed.append((client.private_transport, client.phone_id, handle, client.password_key_domain))
                 client.authorization_data = {'ds_user_id': '123', 'sessionid': 'synthetic-session'}
                 return True
 
@@ -101,7 +141,7 @@ class SavedLoginProfileChecks(unittest.TestCase):
                 worker.run({'directory': directory, 'username': 'teste', 'password': 'synthetic-password', 'mode': 'login'})
             events = [json.loads(line) for line in output.getvalue().splitlines()]
             self.assertEqual(events[-1], {'type': 'done', 'ok': True, 'authenticated': True})
-            self.assertEqual(observed, [('curl', old_client.phone_id, 'teste')])
+            self.assertEqual(observed, [('curl', old_client.phone_id, 'teste', 'b.i.instagram.com')])
             saved = worker.read_json(Path(directory) / 'session.json')
             self.assertEqual(saved['private_transport'], 'curl')
             self.assertEqual(saved['uuids'], old_settings['uuids'])

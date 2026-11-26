@@ -155,6 +155,9 @@ def _run(payload, core):
         # Match the CLI login flow: let the Instagram response determine whether
         # the same challenge is TOTP, SMS, email, or a backup code.
         client.two_factor_method = payload.get("two_factor_method", "auto")
+        from instagrapi.mixins.bloks import CAA_API_DOMAIN
+        client.password_key_domain = CAA_API_DOMAIN
+        client._ramos_proxy_enabled = bool(payload.get("proxy"))
         apply_instagram_proxy(client, payload.get("proxy", ""))
         handle = core.valid_username(payload["username"])
         owner = getattr(client, "_local_login_username", None)
@@ -243,10 +246,14 @@ def _run(payload, core):
                 details.append("HTTP " + str(status))
             if status == 401 and payload.get("mode") == "login" and name in {"ClientError", "ClientUnauthorizedError"}:
                 authenticated = False
+                trace = diagnostic.get("etapas") or []
                 message = ("O serviço de login não autorizou a solicitação. "
                            "Confira os avisos de segurança no aplicativo oficial do Instagram. "
                            "O painel não repetirá o login automaticamente.")
-                trace = diagnostic.get("etapas") or []
+                if trace and trace[-1].get("etapa") == "chave_criptografia_senha":
+                    message = ("O Instagram recusou a obtenção da chave de criptografia da senha, "
+                               "antes do envio das credenciais e do 2FA. "
+                               "Exporte o diagnóstico para conferir a resposta dessa chamada.")
                 if trace and trace[-1].get("http") == status:
                     category = core.safe_symbol(trace[-1].get("etapa"))
                     if category:

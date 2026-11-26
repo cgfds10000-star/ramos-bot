@@ -57,7 +57,7 @@ import unicodedata
 from urllib.parse import urlsplit
 
 CLIENT_VERSION = "3.2.19"
-REVISION = "caa-5-cli-transport-password-key"
+REVISION = "caa-6-web-password-key-domain"
 PRIVATE_TRANSPORT = "curl"
 
 
@@ -720,6 +720,7 @@ def load_client_class():
             self.authenticator_branch = None
             self.caa_password_key = None
             self.password_key_source = None
+            self.password_key_domain = None
             super().__init__(*args, **kwargs)
 
         def password_publickeys(self):
@@ -728,6 +729,25 @@ def load_client_class():
             if self.caa_password_key is not None:
                 self.password_key_source = "caa_headers"
                 return self.caa_password_key
+            if self.password_key_domain:
+                # No worker web, manter a configuração pré-login no domínio CAA.
+                # Uma única chamada: nenhuma troca de rota após uma recusa.
+                from instagrapi.exceptions import ClientError
+                from instagrapi.mixins.bloks import CAA_API_DOMAIN
+                if self.password_key_domain != CAA_API_DOMAIN:
+                    raise FlowError("Dominio inesperado na preparacao da senha.")
+                self.password_key_source = "launcher_sync_caa"
+                self.private_requests_count += 1
+                self._send_private_request(
+                    "launcher/sync/", data={"id": self.uuid, "server_config_retrieval": "1"},
+                    login=True, domain=CAA_API_DOMAIN, return_response=True,
+                    headers={"Authorization": None},
+                )
+                key = password_key_from_response(self.last_response)
+                if key is None:
+                    raise ClientError("Instagram did not return a valid password encryption key",
+                                      response=self.last_response)
+                return key
             self.password_key_source = "launcher_sync"
             return super().password_publickeys()
 
@@ -848,6 +868,10 @@ def load_client_class():
                     "erro": error,
                     "segundos": round(time.monotonic() - started, 2),
                 }
+                # Somente nomes públicos fixos; nunca URL, query ou credenciais.
+                domain = kwargs.get("domain") or "i.instagram.com"
+                if domain in {"i.instagram.com", "b.i.instagram.com"}:
+                    entry["dominio"] = domain
                 if category in {"caa_login", "verificacao_entrada", "verificacao_tela_codigo", "verificacao_envio_codigo"}:
                     try:
                         entry["estrutura_bloks"] = bloks_shape_summary(self, data)
@@ -888,6 +912,8 @@ def password_key_from_response(response):
 
 def endpoint_category(endpoint):
     endpoint = str(endpoint)
+    if endpoint == "launcher/sync/":
+        return "chave_criptografia_senha"
     if TOTP_VERIFY in endpoint or endpoint == "accounts/two_factor_login/":
         return "verificacao_autenticador_envio"
     if TOTP_SCREEN in endpoint:
@@ -1032,6 +1058,7 @@ def safe_diagnostic(client, outcome, error=None):
         "estado_autenticador": getattr(client, "authenticator_state", "nao_solicitado"),
         "transporte_privado": safe_symbol(getattr(client, "private_transport", None)),
         "origem_chave_senha": getattr(client, "password_key_source", None),
+        "proxy_configurado": bool(getattr(client, "_ramos_proxy_enabled", False)),
         "etapas": trace[-100:],
     }
 
