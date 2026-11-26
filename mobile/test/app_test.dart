@@ -39,9 +39,10 @@ final example = <String, dynamic>{
 
 class TestApi extends BackendApi {
   final List<String> writes = [];
+  final Map<String, dynamic> current = jsonDecode(jsonEncode(example));
   TestApi(super.vault);
   @override
-  Future<Map<String, dynamic>> get(String path) async => example;
+  Future<Map<String, dynamic>> get(String path) async => current;
   @override
   Future<Map<String, dynamic>> post(
     String path, [
@@ -54,6 +55,11 @@ class TestApi extends BackendApi {
   @override
   Future<Map<String, dynamic>> delete(String path) async {
     writes.add(path);
+    current['accounts'] = [];
+    for (final session in current['sessions']) {
+      session['authenticated'] = false;
+      session['account_id'] = null;
+    }
     return {'ok': true};
   }
 }
@@ -109,13 +115,19 @@ void main() {
       final vault = MemoryVault();
       final api = TestApi(vault);
       final boundary = GlobalKey();
+      final updates = <Map<String, dynamic>>[];
       await tester.pumpWidget(
         MaterialApp(
           theme: ramosTheme(),
           home: Scaffold(
             body: RepaintBoundary(
               key: boundary,
-              child: AccountsPopup(api: api, vault: vault, initial: example),
+              child: AccountsPopup(
+                api: api,
+                vault: vault,
+                initial: example,
+                onChanged: (state) async => updates.add(state),
+              ),
             ),
           ),
         ),
@@ -144,6 +156,11 @@ void main() {
       await tester.tap(find.text('Remover').last);
       await tester.pumpAndSettle();
       expect(api.writes, ['/accounts/account']);
+      expect(updates, hasLength(1));
+      expect(updates.single['accounts'], isEmpty);
+      expect(updates.single['sessions'][1]['authenticated'], false);
+      expect(find.text('Contas e logins'), findsOneWidget);
+      expect(find.text('@teste'), findsNothing);
       await tester.pumpWidget(const SizedBox());
       api.close();
     },

@@ -81,6 +81,7 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
         error = '';
       });
       if (web == null) await openSite();
+      await publishState();
       final id = pendingSession;
       pendingSession = null;
       if (id != null && mounted) await login(id);
@@ -176,6 +177,7 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
           onPageStarted: (_) {
             if (mounted) setState(() => pageError = '');
           },
+          onPageFinished: (_) => publishState(),
           onWebResourceError: (failure) {
             if (failure.isForMainFrame == true && mounted)
               setState(
@@ -201,6 +203,17 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
     }
     await refresh();
     if (mounted) await login(id);
+  }
+
+  Future<void> publishState({String? sessionId}) async {
+    if (!mounted || web == null) return;
+    try {
+      await web!.runJavaScript(
+        'window.dispatchEvent(new CustomEvent("ramos:state", {detail: ${jsonEncode({'state': state, if (sessionId != null) 'session_id': sessionId})}}));',
+      );
+    } on PlatformException {
+      // The website also polls its state if the page is still loading.
+    }
   }
 
   Future<void> login(String id, {String? username}) async {
@@ -246,9 +259,7 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
     popup = false;
     if (connected == true) {
       await refresh();
-      await web?.runJavaScript(
-        'window.dispatchEvent(new CustomEvent("ramos:session", {detail: ${jsonEncode({'session_id': id})}}));',
-      );
+      await publishState(sessionId: id);
       notice('Conta conectada. As tarefas podem ser iniciadas no site.');
     }
   }
@@ -262,7 +273,16 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => AccountsPopup(api: api!, vault: vault, initial: state),
+      builder: (_) => AccountsPopup(
+        api: api!,
+        vault: vault,
+        initial: state,
+        onChanged: (next) async {
+          if (!mounted) return;
+          setState(() => state = next);
+          await publishState();
+        },
+      ),
     );
     popup = false;
     await refresh();

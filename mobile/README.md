@@ -1,6 +1,6 @@
 # Ramos Bot — aplicativo de logins e site integrado
 
-Aplicativo Android Flutter baseado no ZIP de login fornecido. Abre o site existente em uma WebView sem barra de navegador. O FAB circular de contas fica no canto inferior direito, acima do menu do site, e abre o gerenciador e o popup nativo de login.
+Aplicativo Android Flutter baseado no ZIP de login fornecido. O fundo texturizado é o mesmo arquivo usado em todas as telas do site e do aplicativo. A home mantém a lista de sessões com altura automática e menu inferior fixo. Abre o site existente em uma WebView sem barra de navegador. O FAB circular de contas fica no canto inferior direito, acima do menu do site, e abre o gerenciador e o popup nativo de login.
 
 ## Fluxo
 
@@ -14,7 +14,7 @@ Aplicativo Android Flutter baseado no ZIP de login fornecido. Abre o site existe
 
 O gerenciador mantém os logins salvos com a criptografia Android Keystore já existente no ZIP. As contas podem ser selecionadas e removidas pelo FAB. Remover uma conta também limpa o vínculo e o arquivo correspondente no servidor, preservando as sessões do painel. Operações em andamento são protegidas pelos controles do backend existente.
 
-O login do site passa a abrir o popup nativo quando usado dentro do aplicativo. Fora do aplicativo, o botão usa o deep link `ramosbot://login?session_id=ID`. Esse link contém apenas o identificador da sessão, sem credenciais.
+O site não exibe popup de login ou cadastro de contas. Esse gerenciamento fica no FAB nativo. Ao conectar ou remover uma conta, o aplicativo publica o estado atualizado na página aberta: o Instagram e o @usuário aparecem ou somem na sessão correspondente sem recarregar o site. A página mantém a seleção, a aba e a rolagem. Consultas antigas em andamento não sobrescrevem essa atualização. O deep link `ramosbot://login?session_id=ID` continua compatível e contém apenas o identificador da sessão.
 
 ## Compilar no Windows
 
@@ -27,7 +27,7 @@ flutter test
 flutter build apk --debug --target-platform android-arm64
 ```
 
-O APK de teste assinado fica em `build/app/outputs/flutter-apk/app-debug.apk`. O identificador continua `com.ramos.app.login`, a versão é `1.1.0+4` e o nome exibido é RAMOS BOT. O projeto não inclui senhas do painel, credenciais do Instagram, chaves de API ou chaves de assinatura de produção.
+O APK de teste assinado fica em `build/app/outputs/flutter-apk/app-debug.apk`. O identificador continua `com.ramos.app.login`, a versão é `1.1.0+5` e o nome exibido é RAMOS BOT. O projeto não inclui senhas do painel, credenciais do Instagram, chaves de API ou chaves de assinatura de produção.
 
 O repositório também contém a rotina `Android app` no GitHub Actions para compilar e disponibilizar o APK no artefato `RamosBot-Android`.
 

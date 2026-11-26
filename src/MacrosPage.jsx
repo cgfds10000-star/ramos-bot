@@ -1,6 +1,6 @@
 import {executionActive} from './api.js';
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, Clock3, Eye, EyeOff, Info, KeyRound, Layers3, Minus, Monitor, Play, Plus, RefreshCw, Square } from 'lucide-react';
+import { Check, ChevronDown, Clock3, Eye, EyeOff, KeyRound, Layers3, Minus, Monitor, Play, Plus, RefreshCw, Square } from 'lucide-react';
 
 const VIRALIZE_KEY_STORAGE = 'ramos.viralize.apiKey';
 const VIRALIZE_KEY_PATTERN = /^vzs_[A-Za-z0-9_-]{1,480}$/;
@@ -173,7 +173,7 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
       </label>
       <label className="macro-task-limit">
         <span className="macro-control-caption"><RefreshCw aria-hidden="true"/><span>Limite da rodada</span></span>
-        <input type="number" min="1" max="500" step="1" inputMode="numeric" value={taskLimit} onChange={event => setTaskLimit(event.target.value)} disabled={busy || running} aria-describedby="macro-limit-help"/>
+        <input type="number" min="1" max="500" step="1" inputMode="numeric" value={taskLimit} onChange={event => setTaskLimit(event.target.value)} disabled={busy || running}/>
       </label>
       <div className="macro-speed-control">
         <label className="macro-speed">
@@ -185,7 +185,6 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
         <p id="macro-speed-help" className="macro-flow-note">Pausas variáveis ao aceitar, executar e confirmar.{profile?.task && <> Intervalo de {profile.task[0]}–{profile.task[1]} s entre tarefas e {profile.round[0]}–{profile.round[1]} s entre rodadas.</>}</p>
       </div>
       <button type="button" className="macro-start-button" disabled={!canStart} onClick={() => send('start', selected)}><Play aria-hidden="true"/>Iniciar</button>
-      <div id="macro-limit-help" className="macro-execution-note"><Info aria-hidden="true"/><p>Defina o limite de cada rodada. No modo contínuo, o servidor aguarda novas tarefas e inicia a próxima rodada automaticamente. Você pode interromper a execução a qualquer momento.</p></div>
       <ul className="macro-run-list" aria-live="polite">
         {sessions.filter(session => status[session.id] || messages[session.id]).map(session => {
           const run = status[session.id];

@@ -1,6 +1,6 @@
 # Ramos Bot · Mobile
 
-Painel React com backend Python e aplicativo Android Flutter. O site é exibido dentro do aplicativo sem barra de navegador; o FAB de contas no canto inferior direito abre o gerenciador e o login nativo do celular. Veja `mobile/README.md` para compilar.
+Painel React com backend Python e aplicativo Android Flutter. O site é exibido dentro do aplicativo sem barra de navegador; o FAB de contas no canto inferior direito abre o gerenciador e o login nativo do celular. A home usa o fundo texturizado compartilhado com todas as telas e uma lista que cresce com as sessões, sem ilustração ou altura vazia fixa. Veja `mobile/README.md` para compilar.
 
 ## Testar no Windows
 
@@ -13,17 +13,17 @@ A primeira execução instala as dependências. O ZIP de entrega também inclui 
 
 ## Fluxo do Instagram
 
-- Criar, selecionar, pesquisar e remover sessões. O login abre em um popup com abas que podem ser deslizadas horizontalmente, arrastadas com o mouse ou selecionadas pelas setas do teclado.
-- Conectar pelo aplicativo Android com usuário/senha e 2FA locais, ou reutilizar um login salvo. O site envia somente o ID da sessão à ponte nativa; não recebe a senha do Instagram.
+- Criar, selecionar, pesquisar e remover sessões sem abrir popup de login no site. O Instagram e o @usuário conectado aparecem na própria sessão.
+- Adicionar ou remover contas pelo FAB do aplicativo Android, com usuário/senha e 2FA locais, ou reutilizar um login salvo. O aplicativo envia o estado atualizado para a página já aberta, sem recarregar ou trocar de aba; o site não recebe a senha do Instagram.
 - Quando o Instagram solicita 2FA, o popup nativo do aplicativo continua a mesma tentativa do ZIP de referência. O servidor recebe apenas a sessão autenticada e valida a conta antes de conectá-la ao painel.
-- O endpoint protegido `POST /api/sessions/ID/import` recebe o pacote de sessão do aplicativo. Os IDs das sessões e os dados do volume são preservados. Clientes legados da API continuam disponíveis, mas a interface do site encaminha novos logins ao aplicativo.
+- O endpoint protegido `POST /api/sessions/ID/import` recebe o pacote de sessão do aplicativo. Os IDs das sessões e os dados do volume são preservados. Clientes legados da API continuam disponíveis, mas a interface do site usa o gerenciador nativo de contas.
 - O popup nativo possui um campo único para o código 2FA ou a chave Base32, conforme o método solicitado pelo Instagram. A conversão TOTP ocorre no celular, no instante do envio; senha, chave 2FA e código não são transferidos ao backend. O backend recebe apenas a sessão confirmada.
 - Aprovações em outro aparelho seguem a lógica original do ZIP e são verificadas pelo aplicativo sem repetir automaticamente senha ou código.
 - `buscar "nome" --limite 10`, `buscar "nome" --geral`, `perfil usuario`, `perfil --id 123456`, `seguir usuario`, `seguir --id 123456`, `curtir URL_OU_ID`.
-- Macros iniciadas pelo usuário, interrupção e proxy. A atividade aparece na aba Logs; a tela de sessões não abre um terminal ou campo de comandos. O popup mantém login e 2FA.
+- Macros iniciadas pelo usuário, interrupção e proxy. A atividade aparece na aba Logs; a tela de sessões não abre um terminal ou campo de comandos. Login e 2FA ficam no popup nativo do aplicativo.
 - Diagnóstico exportável sem senhas ou tokens. Escritas e códigos não são reenviados automaticamente.
 
-O núcleo usa o `instagram_login_apk.py` fornecido, com `instagrapi==3.2.19`. A revisão `caa-6-dart-http2` mantém a continuação do 2FA do APK e usa no Docker o transporte Dart da referência `flutter-caa-http2-5`, com `http2==3.2.0`, ALPN `h2` e TLS mínimo 1.3. O worker adapta `input` e `getpass` do terminal para o popup e respeita o método selecionado no painel. Uma sessão só aparece como conectada depois de receber a confirmação autenticada do Instagram. Os testes usam processos e dados sintéticos; não houve login em uma conta real durante esta entrega. O login do site continua saindo pela conexão configurada no servidor; no APK, sai pelo aparelho. Usar o mesmo código de transporte elimina essa diferença de implementação, sem garantir que o Instagram aceite a origem do servidor.
+O núcleo usa o `instagram_login_apk.py` fornecido, com `instagrapi==3.2.19`. A revisão `caa-6-dart-http2` mantém a continuação do 2FA do APK e usa no Docker o transporte Dart da referência `flutter-caa-http2-5`, com `http2==3.2.0`, ALPN `h2` e TLS mínimo 1.3. A API legada mantém a adaptação de `input` e `getpass`; o fluxo atual da interface usa a autenticação nativa e o endpoint de importação de sessão. Uma sessão só aparece como conectada depois de receber a confirmação autenticada do Instagram. Os testes usam processos e dados sintéticos; não houve login em uma conta real durante esta entrega. No fluxo atual, o login sai pelo aparelho. A validação e as ações da sessão importada usam a conexão configurada no servidor. Usar o mesmo código de transporte elimina essa diferença de implementação, sem garantir que o Instagram aceite a origem do servidor.
 
 ### Transporte do app no backend
 

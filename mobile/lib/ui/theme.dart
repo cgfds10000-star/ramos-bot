@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 const purple = Color(0xFFAF16EF);
@@ -46,44 +45,15 @@ class RamosTexture extends StatelessWidget {
   @override
   Widget build(BuildContext context) => DecoratedBox(
     decoration: const BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [Color(0xFF1A092C), ink, Color(0xFF12091C)],
+      color: ink,
+      image: DecorationImage(
+        image: AssetImage('assets/ramos-background.png'),
+        fit: BoxFit.cover,
+        alignment: Alignment.topCenter,
       ),
     ),
-    child: CustomPaint(painter: _TexturePainter(), child: child),
+    child: Material(type: MaterialType.transparency, child: child),
   );
-}
-
-class _TexturePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0xFF9451B5).withValues(alpha: .045)
-      ..strokeWidth = .6;
-    for (double x = -size.height; x < size.width; x += 7) {
-      canvas.drawLine(
-        Offset(x, 0),
-        Offset(x + size.height, size.height),
-        paint,
-      );
-    }
-    final glow = Paint()
-      ..shader =
-          const RadialGradient(
-            colors: [Color(0x448100B8), Color(0x008100B8)],
-          ).createShader(
-            Rect.fromCircle(
-              center: Offset(size.width, 0),
-              radius: math.max(size.width, 300),
-            ),
-          );
-    canvas.drawRect(Offset.zero & size, glow);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class RamosBrand extends StatelessWidget {

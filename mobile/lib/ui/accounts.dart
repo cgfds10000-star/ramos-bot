@@ -6,11 +6,13 @@ class AccountsPopup extends StatefulWidget {
   final BackendApi api;
   final SecureVault vault;
   final Map<String, dynamic> initial;
+  final Future<void> Function(Map<String, dynamic>)? onChanged;
   const AccountsPopup({
     super.key,
     required this.api,
     required this.vault,
     required this.initial,
+    this.onChanged,
   });
   @override
   State<AccountsPopup> createState() => _AccountsPopupState();
@@ -69,6 +71,7 @@ class _AccountsPopupState extends State<AccountsPopup> {
       }
       await widget.vault.put('logins', logins);
       state = await widget.api.get('/state');
+      await widget.onChanged?.call(state);
     } on BackendFailure catch (failure) {
       error = failure.message;
     } finally {

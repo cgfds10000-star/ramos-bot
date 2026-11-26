@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="935" height="114" viewBox="0 0 935 114">
+  <defs>
+    <linearGradient id="sweep" x1="0" y1="0" x2=".75" y2="1">
+      <stop stop-color="#170b25" stop-opacity=".7"/>
+      <stop offset=".7" stop-color="#230735" stop-opacity=".65"/>
+      <stop offset="1" stop-color="#64008e"/>
+    </linearGradient>
+    <linearGradient id="edge"><stop stop-color="#d227fa"/><stop offset=".75" stop-color="#c613fa"/><stop offset="1" stop-color="#2a153e"/></linearGradient>
+    <filter id="glow" x="-50%" y="-100%" width="200%" height="300%"><feGaussianBlur stdDeviation="10"/></filter>
+  </defs>
+  <path d="M0 0H670Q537 106 370 113H0Z" fill="url(#sweep)"/>
+  <path d="M0 113H370Q537 106 670 0" fill="none" stroke="#a000e8" stroke-opacity=".6" stroke-width="8" filter="url(#glow)"/>
+  <path d="M0 113H370Q537 106 670 0" fill="none" stroke="url(#edge)" stroke-width="1.5"/>
+  <path d="M0 113.5H935" stroke="#70338e" stroke-opacity=".8"/>
+</svg>
