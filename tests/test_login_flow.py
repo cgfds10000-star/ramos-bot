@@ -126,7 +126,7 @@ class WebTwoFactorChecks(unittest.TestCase):
         self.assertEqual(self.client.legacy_calls, 0)
         self.client.bloks_two_step_verification_select_method.assert_called_once_with('synthetic-context', selected_method='totp')
         self.client.bloks_two_step_verification_verify_code.assert_called_once_with('synthetic-context', '003754', challenge='totp')
-        validate.assert_called_once_with(self.client, 'teste')
+        validate.assert_not_called()
         self.assertNotIn('003754', output)
         self.assertNotIn('synthetic-password', output)
 
@@ -170,6 +170,7 @@ class WebTwoFactorChecks(unittest.TestCase):
         diagnostic = next(value for path, value in written if Path(path).name == 'diagnostic.json')
         self.assertIn('TypeError', error_message)
         self.assertEqual(diagnostic['excecao'], 'TypeError')
+        self.assertEqual(diagnostic['etapa_worker'], 'login_instagram')
         self.assertNotIn('private synthetic detail', error_message)
         self.assertNotIn('private synthetic detail', json.dumps(diagnostic))
         self.assertNotIn('synthetic-password', output.getvalue())
@@ -275,8 +276,7 @@ def verify(client, context, code, *, challenge):
     return {'synthetic_accepted': code == '003754'}
 
 def validate(client, owner):
-    assert owner == client._local_login_username and str(client.user_id) == '123'
-    client.action_session_validated = True
+    raise AssertionError('Unexpected post-login session validation request')
 
 with ExitStack() as stack:
     def caa(client, *args, **kwargs):

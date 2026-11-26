@@ -107,10 +107,12 @@ def _run(payload, core):
     client = None
     authenticated = False
     failure = None
+    stage = "inicializacao"
     password = payload.pop("password", "")
     try:
         # load_settings da biblioteca usa JSON puro; a sessão é descriptografada
         # em memória e set_settings restaura o mesmo perfil Android.
+        stage = "configurando_cliente"
         client = core.configure_client(core.load_client_class(), directory / "new-session-unused.json", directory / "legacy-unused.json", 30)
         if session_path.is_file():
             settings = read_json(session_path)
@@ -128,6 +130,7 @@ def _run(payload, core):
         if payload["mode"] == "login":
             if client.user_id and (client.authorization or client.sessionid):
                 try:
+                    stage = "validando_sessao_existente"
                     core.validate_action_session(client, handle)
                     authenticated = True
                     emit("log", tone="success", message="Sessão salva validada pelo Instagram.")
@@ -142,20 +145,24 @@ def _run(payload, core):
                 client._local_login_username = handle
                 core.save_client(client, session_path)
                 emit("log", tone="info", message="Autenticando conta...")
+                stage = "login_instagram"
                 from instagrapi.exceptions import TwoFactorRequired
                 try:
                     accepted = client.login(handle, password)
                 except TwoFactorRequired as error:
+                    stage = "continuacao_2fa"
                     accepted = core.continue_two_factor(client, error)
+                stage = "validando_resposta_login"
                 if not accepted or not client.user_id or not (client.authorization or client.sessionid):
                     raise core.FlowError("O Instagram ainda não confirmou esta sessão. Consulte o diagnóstico da tentativa.")
                 client.action_session_validated = False
-                core.validate_action_session(client, handle)
                 authenticated = True
+            stage = "salvando_sessao"
             core.save_client(client, session_path)
             emit("log", tone="success", message="Login realizado com sucesso.")
             emit("log", tone="success", message="Sessão conectada.")
         else:
+            stage = "validando_sessao_para_comando"
             if not owner:
                 raise core.FlowError("Conecte sua conta antes de executar comandos.")
             client.password = None
@@ -165,6 +172,7 @@ def _run(payload, core):
             for index, step in enumerate(payload["steps"]):
                 if index:
                     time.sleep(2)
+                stage = "executando_comando"
                 command, target = step["command"], step["target"]
                 emit("log", tone="command", message=command + " " + target)
                 if command == "buscar":
@@ -202,8 +210,10 @@ def _run(payload, core):
             client.password = None
             try:
                 core.save_client(client, session_path)
-                core.save_private_json(directory / "diagnostic.json", core.safe_diagnostic(
-                    client, "autenticado" if authenticated else "recusado", error=failure))
+                diagnostic = core.safe_diagnostic(
+                    client, "autenticado" if authenticated else "recusado", error=failure)
+                diagnostic["etapa_worker"] = stage
+                core.save_private_json(directory / "diagnostic.json", diagnostic)
             except OSError:
                 emit("log", tone="error", message="Não foi possível salvar a sessão no servidor.")
 
