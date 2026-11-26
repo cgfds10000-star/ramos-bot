@@ -437,35 +437,7 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
               Positioned(
                 right: 18,
                 bottom: 102,
-                child: Semantics(
-                  label: 'Gerenciar contas',
-                  button: true,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: purple.withValues(alpha: .45),
-                          blurRadius: 22,
-                        ),
-                      ],
-                    ),
-                    child: FloatingActionButton(
-                      heroTag: 'accounts',
-                      tooltip: 'Contas e logins',
-                      onPressed: accounts,
-                      backgroundColor: purple,
-                      foregroundColor: Colors.white,
-                      shape: const CircleBorder(
-                        side: BorderSide(color: Color(0xFFEDACFF)),
-                      ),
-                      child: const Icon(
-                        Icons.manage_accounts_outlined,
-                        size: 29,
-                      ),
-                    ),
-                  ),
-                ),
+                child: _RamosAccountsFab(onPressed: accounts),
               ),
             ],
           ),
@@ -473,4 +445,142 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
       ),
     );
   }
+}
+
+class _RamosAccountsFab extends StatelessWidget {
+  final VoidCallback onPressed;
+  const _RamosAccountsFab({required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'Gerenciar contas',
+    button: true,
+    child: Tooltip(
+      message: 'Contas e logins',
+      child: SizedBox.square(
+        dimension: 64,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFFF0ABFF), Color(0xFFC54DEB), Color(0xFF773494)],
+              stops: [0, .4, 1],
+            ),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x66310052),
+                blurRadius: 22,
+                spreadRadius: 2,
+              ),
+              BoxShadow(
+                color: Color(0x8505000B),
+                blurRadius: 12,
+                offset: Offset(0, 5),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(1.3),
+            child: ClipOval(
+              child: Material(
+                color: Colors.transparent,
+                child: Ink(
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color(0xFFC62CEF),
+                        Color(0xFF9509D0),
+                        Color(0xFF61009D),
+                      ],
+                      stops: [0, .42, 1],
+                    ),
+                  ),
+                  child: InkWell(
+                    onTap: onPressed,
+                    customBorder: const CircleBorder(),
+                    splashColor: const Color(0x44F2C6FF),
+                    highlightColor: const Color(0x24FFFFFF),
+                    focusColor: const Color(0x35F0BFFF),
+                    child: const CustomPaint(painter: _AccountsFabArtwork()),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _AccountsFabArtwork extends CustomPainter {
+  const _AccountsFabArtwork();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final radius = size.shortestSide / 2;
+    canvas.save();
+    canvas.clipPath(
+      Path()..addOval(Rect.fromCircle(center: center, radius: radius)),
+    );
+    final texture = Paint()
+      ..color = const Color(0x0CFFE3FF)
+      ..strokeWidth = .65;
+    for (double x = 0; x < size.width + size.height; x += 5) {
+      canvas.drawLine(
+        Offset(x, 0),
+        Offset(x - size.height, size.height),
+        texture,
+      );
+    }
+    canvas.drawCircle(
+      center,
+      radius - 1.3,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = .8
+        ..shader = const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0x65FFE3FF), Color(0x00FFE3FF)],
+        ).createShader(Offset.zero & size),
+    );
+    canvas.restore();
+
+    const iconSize = 33.0;
+    canvas.save();
+    canvas.translate((size.width - iconSize) / 2, (size.height - iconSize) / 2);
+    canvas.scale(iconSize / 24);
+    final outline = Paint()
+      ..color = const Color(0xFFFFF8FF)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    canvas.drawCircle(const Offset(9, 7.8), 4.4, outline);
+    canvas.drawPath(
+      Path()
+        ..moveTo(1.6, 21)
+        ..cubicTo(1.6, 11.7, 16.4, 11.7, 16.4, 21),
+      outline,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(16.1, 3.8)
+        ..cubicTo(21.3, 4.8, 21.3, 11.1, 17.3, 12.2)
+        ..moveTo(18.3, 15)
+        ..cubicTo(20.8, 16.2, 22.2, 18.3, 22.2, 21),
+      outline,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
