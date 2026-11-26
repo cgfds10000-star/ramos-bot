@@ -1,11 +1,11 @@
 import React, {useState} from 'react';
-import {AlignLeft, CalendarDays, ChevronDown, CircleCheck, CircleX, Clock3, Download, FileText, History, Search, TriangleAlert} from 'lucide-react';
+import {AlignLeft, CalendarDays, ChevronDown, CircleCheck, CircleX, Clock3, FileText, History, Search, TriangleAlert} from 'lucide-react';
 import {filterLogs, formatLogTime, logCounts, logSessionName} from './logs.js';
 
 const types = {info: 'Informação', success: 'Sucesso', warning: 'Aviso', error: 'Erro', command: 'Comando'};
 const filters = [['all', 'Todos', null], ['success', 'Sucesso', CircleCheck], ['warning', 'Avisos', TriangleAlert], ['error', 'Erros', CircleX]];
 
-export default function LogsPage({logs, sessions, online, checking, onExport}) {
+export default function LogsPage({logs, sessions, online, checking}) {
   const [query, setQuery] = useState('');
   const [sessionId, setSessionId] = useState('');
   const [period, setPeriod] = useState('today');
@@ -59,6 +59,5 @@ export default function LogsPage({logs, sessions, online, checking, onExport}) {
       </div>
       {(query || sessionId || tone !== 'all') && <p className="logs-filter-result" role="status">{visible.length} de {scoped.length} registros</p>}
     </section>
-    <button type="button" className="logs-export" disabled={!visible.length} onClick={() => onExport(visible)}><Download aria-hidden="true"/>Exportar histórico</button>
   </main>;
 }
