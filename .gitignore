@@ -8,6 +8,8 @@ __pycache__/
 *.db
 *.sqlite*
 data/
+data-pc/
+.ramos-pc.json
 .venv/
 *.zip
 *.tar.gz

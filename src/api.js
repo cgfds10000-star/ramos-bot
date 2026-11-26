@@ -1,10 +1,12 @@
 const trimBase = value => String(value || '').trim().replace(/\/+$/, '');
 
 export class RamosApi {
-  constructor(base = '') {
+  constructor(base = '', {token = ''} = {}) {
     this.base = trimBase(base);
     this.csrf = '';
     this.serverClock = null;
+    this.token = token;
+    this.local = this.base === 'http://127.0.0.1:8765';
   }
 
   async request(path, options = {}) {
@@ -14,7 +16,8 @@ export class RamosApi {
     try {
       const response = await fetch(`${this.base}/api${path}`, {
         ...options,
-        headers: { 'Content-Type': 'application/json', ...(this.csrf ? { 'X-Ramos-CSRF': this.csrf } : {}), ...options.headers },
+        headers: { 'Content-Type': 'application/json', ...(this.token ? {Authorization: 'Bearer ' + this.token} : {}), ...(this.csrf ? { 'X-Ramos-CSRF': this.csrf } : {}), ...options.headers },
+        ...(this.local ? {targetAddressSpace: 'loopback'} : {}),
         signal: controller.signal,
         cache: 'no-store',
       });
@@ -24,6 +27,7 @@ export class RamosApi {
       if (!response.ok) {
         const failure = new Error(body.error || 'Não foi possível concluir a operação.');
         failure.locked = Boolean(body.locked);
+        failure.status = response.status;
         throw failure;
       }
       if (body.csrf) this.csrf = body.csrf;
@@ -34,7 +38,7 @@ export class RamosApi {
       return body;
     } catch (error) {
       if (error.name === 'AbortError') throw new Error('O servidor demorou para responder. Tente atualizar a conexão.');
-      if (error instanceof TypeError) throw new Error('Sem conexão com o servidor do Ramos Bot.');
+      if (error instanceof TypeError) throw new Error(this.local ? 'Abra o Conector PC e permita a conexão local no navegador. O login não será enviado pelo Railway.' : 'Sem conexão com o servidor do Ramos Bot.');
       throw error;
     } finally { clearTimeout(timer); }
   }

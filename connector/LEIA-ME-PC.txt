@@ -1,0 +1,18 @@
+RAMOS BOT - LOGIN COM O IP DO PC
+
+1. Extraia a pasta completa do ZIP.
+2. Abra INICIAR-CONEXAO-PC.cmd. Requer Python 3.11 ou superior.
+3. Na aba que abrir, clique em Conectar ao meu PC.
+4. Permita a conexao local se o navegador solicitar.
+5. Faca o login e informe o codigo 2FA normalmente.
+
+O login e o 2FA sao executados no PC. A sessao autenticada e enviada
+ao seu painel via HTTPS, e o Railway valida a sessao para continuar.
+Depois da transferencia, o conector e encerrado; o PC pode ser fechado.
+
+A pasta data-pc e o arquivo .ramos-pc.json contem os dados locais
+protegidos. Nao compartilhe esses arquivos. O pacote original nao
+contem nenhuma conta, senha, codigo 2FA ou token pessoal.
+
+O conector aceita apenas conexoes em 127.0.0.1:8765 e exige uma
+chave local. Nao e necessario abrir portas no roteador.

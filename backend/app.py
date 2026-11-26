@@ -230,6 +230,7 @@ class RamosService:
         self.worker_command = worker_command or [sys.executable, "-u", str(ROOT / "backend" / "worker.py")]
         self.dependency_check = dependency_check or (lambda: importlib.util.find_spec("instagrapi") is not None)
         self.jobs = {}
+        self.session_imports = {}
         self.viralize_api = viralize_api
         self.proxy_checker = proxy_checker
         self.proxy_check_running = False
@@ -443,6 +444,8 @@ class RamosService:
             data["logs"] = list(self.logs)
             data["csrf"] = self.csrf
             data["engine_ready"] = bool(self.dependency_check())
+            data["connection"] = {"pc_login": os.environ.get("RAMOS_PC_CONNECTOR") == "1",
+                                  "requires_pc_login": os.environ.get("RAMOS_REQUIRE_PC_LOGIN") == "1"}
             data["server_time_ms"] = int(time.time() * 1000)
             return data
 
@@ -459,6 +462,8 @@ class RamosService:
             mode = payload.get("mode")
             verification_code = ""
             if mode == "login":
+                if payload.get("password") and os.environ.get("RAMOS_REQUIRE_PC_LOGIN") == "1":
+                    raise ApiError("Use Entrar com meu IP para fazer o login e o 2FA no seu PC.", 409)
                 account = self.add_account(payload.get("username"))
                 password = payload.get("password", "")
                 if not isinstance(password, str) or len(password) > 1000:
@@ -517,6 +522,54 @@ class RamosService:
             monitor = threading.Thread(target=self.monitor, args=(session_id, job), daemon=True)
             monitor.start()
             return {"ok": True, "job_id": job["id"]}
+
+    def import_session(self, body):
+        handle = username(body.get("username"))
+        settings = body.get("settings")
+        import_id = body.get("import_id", "")
+        if not isinstance(import_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,100}", import_id):
+            raise ApiError("Transferência de sessão inválida.")
+        if not isinstance(settings, dict) or str(settings.get('_local_login_username', '')).casefold() != handle.casefold():
+            raise ApiError("A sessão recebida pertence a outra conta.")
+        auth = settings.get('authorization_data')
+        if not isinstance(auth, dict) or not isinstance(auth.get('sessionid'), str) or not 1 <= len(auth['sessionid']) <= 4096 or not re.fullmatch(r'[1-9][0-9]{0,29}', str(auth.get('ds_user_id', ''))):
+            raise ApiError("O Instagram ainda não confirmou a sessão no PC.")
+        if any(settings.get(key) for key in ('password', 'verification_code', 'enc_password')):
+            raise ApiError("Envie somente a sessão autenticada.")
+        fingerprint = hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()
+        with self.lock:
+            previous = self.session_imports.get(import_id)
+            if previous:
+                if previous['fingerprint'] != fingerprint:
+                    raise ApiError("A transferência já foi usada para outra sessão.", 409)
+                return previous['result']
+            sid = body.get('session_id')
+            target = self.session(sid) if sid else None
+            if target and (target['id'] in self.jobs or self.viralize_runs.get(target['id'], {}).get('status') in ACTIVE_RUNS):
+                raise ApiError("Encerre a operação desta sessão antes de conectar outra conta.", 409)
+            account = self.add_account(handle)
+            if any(job['account_id'] == account['id'] for job in self.jobs.values()):
+                raise ApiError("A conta já está em uso.", 409)
+            if not target:
+                if len(self.data['sessions']) >= 20:
+                    raise ApiError('O limite de 20 sessões foi atingido.')
+                target = self.new_session('Sessão ' + str(len(self.data['sessions']) + 1))
+                self.data['sessions'].append(target)
+            path = self.directory / 'accounts' / account['id'] / 'session.json'
+            original = path.read_bytes() if path.is_file() else None
+            private_json(path, settings)
+            try:
+                result = {**self.start(target['id'], {'mode': 'login', 'username': handle}), 'session_id': target['id']}
+            except Exception:
+                if original is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.write_bytes(original)
+                raise
+            if len(self.session_imports) >= 128:
+                self.session_imports.pop(next(iter(self.session_imports)))
+            self.session_imports[import_id] = {'fingerprint': fingerprint, 'result': result}
+            return result
 
     def monitor(self, session_id, job):
         process = job["process"]
@@ -899,6 +952,8 @@ class RamosService:
                     self.run_threads.pop(session_id, None)
 
     def mutate(self, method, route, body):
+        if method == 'POST' and route == ['sessions', 'import']:
+            return self.import_session(body)
         if route == ['viralize', 'start'] and method == 'POST':
             return self.start_viralize_batch(body)
         if route == ['proxy', 'test'] and method == 'POST':
@@ -1114,19 +1169,31 @@ class RamosHandler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", self.headers.get("Origin", "http://127.0.0.1:8765"))
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Ramos-CSRF")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Ramos-CSRF, Authorization")
         self.end_headers()
 
     def do_GET(self):
         try:
             if urlsplit(self.path).path == "/api/health":
-                return self.reply(200, {"ok": True, "login_flow": "script-web-2fa-v2",
+                return self.reply(200, {"ok": True, "login_flow": "pc-login-handoff-v1",
+                                        "pc_login_required": os.environ.get('RAMOS_REQUIRE_PC_LOGIN') == '1',
                                         "revision": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "local")})
             path = urlsplit(self.path).path
             if path.startswith("/api/") or not os.environ.get("RAMOS_ADMIN_PASSWORD"):
                 self.access()
             if path == "/api/state":
                 return self.reply(200, self.server.service.snapshot())
+            if path.startswith('/api/connector/session/') and os.environ.get('RAMOS_PC_CONNECTOR') == '1':
+                sid = path.rsplit('/', 1)[-1]
+                with self.server.service.lock:
+                    session = self.server.service.session(sid)
+                    if sid in self.server.service.jobs:
+                        return self.reply(200, {'ready': False})
+                    if not session.get('authenticated'):
+                        raise ApiError('Conclua o login e o 2FA no PC.', 409)
+                    account = self.server.service.account(session['account_id'])
+                    settings = storage_read(self.server.service.directory / 'accounts' / account['id'] / 'session.json')
+                    return self.reply(200, {'ready': True, 'username': account['username'], 'settings': settings})
             if path.startswith("/api/diagnostic/"):
                 session = self.server.service.session(path.rsplit("/", 1)[-1])
                 if not session.get("account_id"):
@@ -1190,6 +1257,18 @@ class RamosHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if urlsplit(self.path).path == "/api/access/login":
             return self.panel_login()
+        if urlsplit(self.path).path == '/api/connector/complete':
+            try:
+                self.access(mutation=True)
+                if os.environ.get('RAMOS_PC_CONNECTOR') != '1':
+                    raise ApiError('Operação não encontrada.', 404)
+                if self.server.service.jobs:
+                    raise ApiError('Aguarde o login terminar.', 409)
+                self.reply(200, {'ok': True})
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+            except ApiError as error:
+                self.reply(error.status, {'error': str(error)})
+            return
         self.mutation("POST")
 
     def do_DELETE(self):
@@ -1202,6 +1281,14 @@ def make_server(service, port=8765):
     server.service = service
     actual_port = server.server_address[1]
     server.allowed_origins = {f"http://{host}:{number}" for host in ("localhost", "127.0.0.1") for number in (actual_port, 5178, 4178, 5173, 4173)}
+    extra_origins = os.environ.get('RAMOS_TRUSTED_ORIGINS', '')
+    if extra_origins and not (os.environ.get('RAMOS_API_KEY') or os.environ.get('RAMOS_ADMIN_PASSWORD')):
+        server.server_close()
+        raise RuntimeError('Proteja o módulo local antes de autorizar o site.')
+    for origin in extra_origins.split(','):
+        parsed = urlsplit(origin.strip())
+        if parsed.scheme == 'https' and parsed.netloc and not parsed.username and not parsed.password and parsed.path in ('', '/') and not parsed.query and not parsed.fragment:
+            server.allowed_origins.add('https://' + parsed.netloc)
     return server
 
 
@@ -1209,6 +1296,8 @@ def main():
     parser = argparse.ArgumentParser(description="Servidor local do Ramos Bot")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8765")))
     args = parser.parse_args()
+    if os.environ.get('RAMOS_PC_CONNECTOR') == '1' and os.environ.get('RAMOS_HOST', '127.0.0.1') not in {'127.0.0.1', 'localhost', '::1'}:
+        raise RuntimeError('O Conector PC deve aceitar somente conexões locais.')
     if (os.environ.get("RAMOS_API_KEY") or os.environ.get("RAMOS_ADMIN_PASSWORD")) and not os.environ.get("RAMOS_ENCRYPTION_KEY"):
         raise RuntimeError("Configure RAMOS_ENCRYPTION_KEY antes de publicar o servidor.")
     if os.environ.get("RAMOS_HOST", "127.0.0.1") not in {"127.0.0.1", "localhost", "::1"} and not (os.environ.get("RAMOS_API_KEY") or os.environ.get("RAMOS_ADMIN_PASSWORD")):
