@@ -84,17 +84,59 @@ body:has(#root > .app-shell) #root{height:100dvh;overflow:hidden}
 #root > .app-shell > nav.bottom-nav button:focus-visible{outline:2px solid #f5dbff;outline-offset:2px}
 #root > .app-shell > nav.bottom-nav button:hover:not(.active){border-color:#aa62cb;background:#321c40}
 
-.tool-page{margin:18px max(12px,calc(25 * var(--u))) 0}
-.tool-page-card{min-width:0;padding:clamp(20px,calc(30 * var(--u)),30px);border:1px solid #6c3688;border-radius:22px;background:linear-gradient(140deg,#281232,#140b20);box-shadow:inset 0 1px 12px #9b45be22}
-.tool-page-heading{display:flex;gap:12px;align-items:center;margin-bottom:25px}
-.tool-page-heading svg{width:29px;height:29px;color:#ddadfa;stroke-width:1.8}
-.tool-page-heading h1{font-size:clamp(1.5rem,calc(34 * var(--u)),2rem);line-height:1.2}
-.tool-page .panel-form{max-width:640px;width:100%}
-.tool-page .primary-button{border:1px solid #bd56ef}
-.tool-page .panel-intro{margin-bottom:0}
-.tool-page .toggle-row{min-height:65px}
-.tool-page .setting-info{min-height:42px}
-.tool-page .panel-form select{padding-right:32px}
+.settings-page{margin:clamp(18px,calc(30 * var(--u)),30px) max(12px,calc(25 * var(--u))) 0}
+.continuous-execution-card{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  min-height:clamp(96px,calc(158 * var(--u)),158px);
+  padding:clamp(20px,calc(40 * var(--u)),40px);
+  border:2px solid #8642a2;
+  border-radius:clamp(22px,calc(34 * var(--u)),34px);
+  background:radial-gradient(ellipse at 10% 0%,#55216b38,transparent 75%),linear-gradient(120deg,#211029e8,#150b20ed);
+  box-shadow:inset 0 1px 0 #ba6fe622;
+  cursor:pointer;
+}
+.continuous-execution-card>span{
+  min-width:0;
+  color:#faf6ff;
+  font-size:clamp(1.125rem,calc(40 * var(--u)),2.5rem);
+  line-height:1.25;
+  font-weight:700;
+}
+.continuous-execution-card input{
+  appearance:none;
+  position:relative;
+  flex:0 0 auto;
+  width:clamp(58px,calc(115 * var(--u)),115px);
+  height:clamp(32px,calc(56 * var(--u)),56px);
+  margin:0;
+  padding:0;
+  border:1px solid #725383;
+  border-radius:999px;
+  background:#3d284c;
+  cursor:pointer;
+  transition:background .2s,border-color .2s;
+}
+.continuous-execution-card input::before{
+  content:'';
+  position:absolute;
+  top:5px;
+  left:5px;
+  width:calc(clamp(32px,calc(56 * var(--u)),56px) - 12px);
+  height:calc(clamp(32px,calc(56 * var(--u)),56px) - 12px);
+  border-radius:50%;
+  background:#fff;
+  box-shadow:0 1px 4px #15051f33;
+  transition:transform .2s;
+}
+.continuous-execution-card input:checked{border-color:#9932d8;background:linear-gradient(120deg,#9527d3,#9221d3)}
+.continuous-execution-card input:checked::before{transform:translateX(calc(clamp(58px,calc(115 * var(--u)),115px) - clamp(32px,calc(56 * var(--u)),56px)))}
+.continuous-execution-card:focus-within{border-color:#c878ef}
+.continuous-execution-card input:disabled{cursor:wait;opacity:.6}
+.continuous-execution-card:has(input:disabled){cursor:default}
+@media(prefers-reduced-motion:reduce){.continuous-execution-card input,.continuous-execution-card input::before{transition:none}}
 
 @media(max-width:360px){
   #root > .app-shell > nav.bottom-nav{gap:3px;padding:5px;border-radius:23px}

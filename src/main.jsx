@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Bot, CalendarDays, Download, Fingerprint, Instagram, Link2, List, LoaderCircle, Monitor, Play, Plus, Power, Radio, Search, Settings, Settings2, ShieldCheck, Square, Trash2, UsersRound, Workflow, X } from 'lucide-react';
+import { Bot, CalendarDays, Download, Fingerprint, Instagram, Link2, List, LoaderCircle, Monitor, Play, Plus, Power, Search, Settings, ShieldCheck, Square, Trash2, UsersRound, Workflow, X } from 'lucide-react';
 import { RamosApi, parseCommand, selectSession, sessionBusy, executionActive } from './api.js';
 import MacrosPage from './MacrosPage.jsx';
 import LogsPage from './LogsPage.jsx';
@@ -40,8 +40,6 @@ function App() {
   const [filter, setFilter] = useState('');
   const [macroName, setMacroName] = useState('');
   const [macroText, setMacroText] = useState('');
-  const [twoFactor, setTwoFactor] = useState('auto');
-  const [continuousExecution, setContinuousExecution] = useState(true);
   const session = selectSession(state, selected);
   const busy = sessionBusy(session);
   const sessionLogs = state.logs.filter(item => item.session_id === session?.id || !item.session_id).sort((a, b) => (a.order || a.id) - (b.order || b.id));
@@ -127,7 +125,6 @@ function App() {
       if (!appMessage({action: 'accounts'})) setToast('Gerencie suas contas pela bolinha de contas no aplicativo.');
       return;
     }
-    if (value === 'settings') {setTwoFactor(state.settings.two_factor_method); setContinuousExecution(state.settings.continuous_execution !== false);}
     if (['macros', 'logs', 'proxy', 'settings'].includes(value)) { setPage(value); setPanel(null); return; }
     setPanel(value);
   }
@@ -155,9 +152,13 @@ function App() {
     if (result) { setMacroName(''); setMacroText(''); }
   }
 
-  const toolForms = {
-    settings: <form className="panel-form" onSubmit={async event => { event.preventDefault(); const result = await act(() => api.post('/settings', { two_factor_method: twoFactor, execution_mode: 'server', continuous_execution: continuousExecution }), 'Configurações salvas.'); if (result) setPanel(null); }}><div className="server-execution-setting"><span className="server-setting-title"><Radio size={22}/><strong>Execução no servidor</strong><span>Ativa</span></span><p>Depois de iniciar, suas sessões continuam no servidor se você ficar sem internet ou fechar o site.</p><p>Ao voltar, acompanhe o andamento e use Interromper para parar. No modo contínuo, o executor aguarda quando a fila está vazia e começa novas rodadas até você interromper. Erros e verificações da conta pausam o fluxo.</p></div><label className="toggle-row"><span>Execução contínua<small>Continuar aguardando tarefas entre as rodadas</small></span><input type="checkbox" role="switch" checked={continuousExecution} onChange={event => setContinuousExecution(event.target.checked)}/></label><p className="panel-intro">Esta configuração vale para a próxima execução iniciada. O servidor salva o andamento para retomar após reinícios quando não houver uma ação de resultado incerto.</p><label>Verificação em duas etapas<select value={twoFactor} onChange={event => setTwoFactor(event.target.value)}><option value="autenticador">App de autenticação (TOTP de 6 dígitos)</option><option value="auto">Automático (igual ao script Python)</option></select></label><p className="panel-intro">O Instagram determina o método solicitado. O painel usa a mesma continuação do script Python para autenticador, SMS/e-mail ou código de backup. Cada código é enviado uma única vez.</p><div className="setting-info"><span>Servidor</span><strong>{online ? 'Conectado' : 'Offline'}</strong></div><div className="setting-info"><span>Módulo Instagram</span><strong>{state.engine_ready ? 'Instalado' : 'Aguardando instalação'}</strong></div><button className="primary-button" disabled={!online || pending}><Settings2 size={17}/>Salvar configurações</button></form>,
-  };
+  async function saveContinuousExecution(enabled) {
+    await act(() => api.post('/settings', {
+      two_factor_method: state.settings.two_factor_method || 'auto',
+      execution_mode: 'server',
+      continuous_execution: enabled,
+    }), 'Configuração salva.');
+  }
 
   const title = { proxy: 'Proxy', 'command-macros': 'Sequências de comandos', logs: 'Logs', settings: 'Configurações', menu: 'Sua sessão', delete: 'Remover sessão?' }[panel];
 
@@ -168,7 +169,13 @@ function App() {
       <a className="brand" href="#" onClick={event => { event.preventDefault(); setPanel(null); setPage('sessions'); }} aria-label="Ramos Bot, início"><span className="brand-mark"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M5 5h24c20 0 20 26 3 26l14 14H32L14 26h14c9 0 9-11 0-11H15z" fill="currentColor"/><path d="M6 15l10 10v20H6z" fill="#00c8ed"/></svg></span><span>RAMOS <strong>BOT</strong></span></a>
     </header>
 
-    {page === 'macros' ? <MacrosPage sessions={state.sessions} api={api} refresh={refresh} status={state.viralize || {}} pacingProfiles={state.viralize_pacing} online={online} selectedIds={macroSelection} onSelectionChange={setMacroSelection}/> : page === 'logs' ? <LogsPage logs={state.logs} sessions={state.sessions} online={online} checking={checking} onExport={exportLogs}/> : page === 'proxy' ? <ProxyPage api={api} proxy={state.proxy} online={online} busy={state.sessions.some(sessionBusy) || Object.values(state.viralize || {}).some(executionActive)} refresh={refresh}/> : page === 'settings' ? <main className="tool-page" aria-label={page === 'proxy' ? 'Proxy' : 'Configurações'}><section className="tool-page-card"><div className="tool-page-heading">{page === 'proxy' ? <ShieldCheck aria-hidden="true"/> : <Settings aria-hidden="true"/>}<h1>{page === 'proxy' ? 'Proxy' : 'Configurações'}</h1></div>{toolForms[page]}{error && <div className="error-banner" role="alert">{error}</div>}</section></main> : <main inert={Boolean(panel)}>
+    {page === 'macros' ? <MacrosPage sessions={state.sessions} api={api} refresh={refresh} status={state.viralize || {}} pacingProfiles={state.viralize_pacing} online={online} selectedIds={macroSelection} onSelectionChange={setMacroSelection}/> : page === 'logs' ? <LogsPage logs={state.logs} sessions={state.sessions} online={online} checking={checking}/> : page === 'proxy' ? <ProxyPage api={api} proxy={state.proxy} online={online} busy={state.sessions.some(sessionBusy) || Object.values(state.viralize || {}).some(executionActive)} refresh={refresh}/> : page === 'settings' ? <main className="settings-page" aria-label="Configurações">
+      <label className="continuous-execution-card" aria-busy={pending}>
+        <span>Execução contínua</span>
+        <input type="checkbox" role="switch" checked={state.settings.continuous_execution !== false} disabled={!online || checking || pending} onChange={event => saveContinuousExecution(event.target.checked)}/>
+      </label>
+      {error && <div className="error-banner" role="alert">{error}</div>}
+    </main> : <main inert={Boolean(panel)}>
       <section className="welcome"><h1>Bem-vindo, <span>Carlos</span></h1><p>Gerencie suas sessões, contas, proxy e macros.</p></section>
       <section className="stats" aria-label="Resumo do Ramos Bot">
         <button onClick={() => { setPage('sessions'); setPanel(null); }}><Monitor/><span>Sessões</span><strong>{state.sessions.length}</strong></button>
