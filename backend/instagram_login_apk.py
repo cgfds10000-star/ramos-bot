@@ -57,7 +57,7 @@ import unicodedata
 from urllib.parse import urlsplit
 
 CLIENT_VERSION = "3.2.19"
-REVISION = "caa-7-script-key-headers"
+REVISION = "caa-8-key-cooldown"
 PRIVATE_TRANSPORT = "curl"
 
 
@@ -731,7 +731,18 @@ def load_client_class():
             self.password_key_source = "launcher_sync"
             # O núcleo validado lê os headers antes de julgar o corpo HTTP.
             # Um 4xx de configuração pode conter a chave pública necessária.
-            return super().password_publickeys()
+            from instagrapi.exceptions import ClientError, PleaseWaitFewMinutes
+            try:
+                result = super().password_publickeys()
+            except ClientError as error:
+                if password_key_summary(self.last_response)["message_category"] == "please_wait":
+                    raise PleaseWaitFewMinutes("Instagram pediu uma pausa na preparacao do login.",
+                                               response=self.last_response) from error
+                raise
+            if password_key_summary(self.last_response)["message_category"] == "please_wait":
+                raise PleaseWaitFewMinutes("Instagram pediu uma pausa na preparacao do login.",
+                                           response=self.last_response)
+            return result
 
         def private_request(self, endpoint, *args, **kwargs):
             # A dependencia repete timeouts mesmo com retry_total=0. Nao repetir
@@ -916,6 +927,8 @@ def password_key_summary(response):
                   "not authorized": "unauthorized", "please wait a few minutes": "please_wait"}
     message = data.get("message")
     category = categories.get(message.strip().casefold(), "other") if isinstance(message, str) else None
+    if isinstance(message, str) and message.strip().casefold().startswith(("please wait a few minutes", "aguarde alguns minutos")):
+        category = "please_wait"
     status = getattr(response, "status_code", None)
     return {"http": status if isinstance(status, int) else None,
             "key_id_header": bool(headers.get("ig-set-password-encryption-key-id")),

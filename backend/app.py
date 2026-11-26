@@ -1247,7 +1247,8 @@ def main():
             print(json.dumps({'event': 'ramos_proxy_check', **result['check']}, ensure_ascii=False), flush=True)
         threading.Thread(target=check_initial_proxy, daemon=True).start()
     server = make_server(service, args.port)
-    threading.Thread(target=service.check_instagram_key, daemon=True).start()
+    if os.environ.get("RAMOS_KEY_PROBE_ON_START") == "1":
+        threading.Thread(target=service.check_instagram_key, daemon=True).start()
     service.resume_runs()
     print(json.dumps({'event': 'ramos_executor_ready', 'mode': 'server',
                       'continuous_default': service.data['settings']['continuous_execution'],

@@ -34,8 +34,14 @@ def probe(proxy=""):
             if isinstance(message, str):
                 terms = sorted(set(re.findall(r'[a-z]+', message.casefold())) & MESSAGE_TERMS)
                 # Somente a resposta de uma chamada sem conta e sem proxy.
-                if not proxy and re.fullmatch(r"[\w\s.,!?;:'()\-]{0,240}", message):
+                if not proxy and message.strip() and re.fullmatch(r"[\w\s.,!?;:'()\-]{0,240}", message):
                     anonymous_message = message
+            if not proxy and isinstance(data, dict) and anonymous_message is None:
+                for field in ('error_title', 'detail', 'error_type'):
+                    candidate = data.get(field)
+                    if isinstance(candidate, str) and candidate.strip() and re.fullmatch(r"[\w\s.,!?;:'()\-]{0,240}", candidate):
+                        anonymous_message = candidate
+                        break
         except (ValueError, AttributeError, TypeError):
             pass
         return {"available": available, "exception": error, "message_terms": terms,

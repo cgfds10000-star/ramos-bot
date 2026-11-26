@@ -13,7 +13,7 @@ from requests import Response
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 from Cryptodome.PublicKey import RSA
 from instagrapi import Client
-from instagrapi.exceptions import ClientError
+from instagrapi.exceptions import ClientError, PleaseWaitFewMinutes
 import instagram_login_apk as core
 import worker
 import key_probe
@@ -122,12 +122,26 @@ class PasswordPreflightChecks(unittest.TestCase):
         send.assert_called_once()
         self.assertNotIn('domain', send.call_args.kwargs)
 
+    def test_instagram_wait_message_on_401_stops_once_before_password_encryption(self):
+        for message in ('Aguarde alguns minutos antes de tentar novamente.',
+                        'Please wait a few minutes before you try again.'):
+            with self.subTest(message=message):
+                response = Response()
+                response.status_code = 401
+                response.headers['content-type'] = 'application/json'
+                response._content = json.dumps({'message': message, 'status': 'fail'}).encode()
+                with patch.object(self.client, '_send_private_request', side_effect=lambda *_a, **_k: setattr(self.client, 'last_response', response)) as send:
+                    with self.assertRaises(PleaseWaitFewMinutes):
+                        self.client.password_encrypt('synthetic-password')
+                send.assert_called_once()
+                self.assertFalse(self.client.user_id)
+
     def test_key_probe_never_logs_in_or_persists_a_session(self):
         response = Response()
         response.status_code = 401
         response.headers.update(self.headers)
         response.headers['content-type'] = 'application/json'
-        response._content = b'{"message":"synthetic-private-error"}'
+        response._content = b'{"message":"synthetic-private-error token=synthetic-token"}'
         self.client.last_response = response
         with patch.object(core, 'configure_client', return_value=self.client), \
                 patch.object(self.client, 'password_publickeys', return_value=(7, self.public_key)), \
