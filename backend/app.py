@@ -230,6 +230,7 @@ class RamosService:
         self.worker_command = worker_command or [sys.executable, "-u", str(ROOT / "backend" / "worker.py")]
         self.dependency_check = dependency_check or (lambda: importlib.util.find_spec("instagrapi") is not None)
         self.jobs = {}
+        self.instagram_key_check = {"status": "not_run"}
         self.viralize_api = viralize_api
         self.proxy_checker = proxy_checker
         self.proxy_check_running = False
@@ -507,6 +508,32 @@ class RamosService:
             monitor = threading.Thread(target=self.monitor, args=(session_id, job), daemon=True)
             monitor.start()
             return {"ok": True, "job_id": job["id"]}
+
+    def check_instagram_key(self):
+        """Uma verificação no início do servidor, sem tentar autenticar contas."""
+        self.instagram_key_check = {"status": "checking"}
+        with self.lock:
+            proxy = self.data.get("proxy", "")
+        try:
+            result = subprocess.run([sys.executable, str(ROOT / "backend" / "key_probe.py")],
+                                    input=json.dumps({"proxy": proxy}), capture_output=True,
+                                    text=True, encoding="utf-8", timeout=25)
+            report = json.loads(result.stdout) if result.returncode == 0 else {}
+            if result.returncode or not isinstance(report, dict) or "available" not in report:
+                raise ValueError("Configuração indisponível.")
+            # A saúde pública expõe apenas o formato fixo de uma chamada sem conta.
+            checks = {}
+            for key in ("available", "key_id_header", "public_key_header", "valid_key_headers"):
+                checks[key] = report.get(key) is True
+            status = report.get("http")
+            checks["http"] = status if type(status) is int and 100 <= status <= 599 else None
+            for key, allowed in {"body_kind": {"json", "html", "other"},
+                                 "message_category": {"useragent_mismatch", "login_required", "invalid_signature", "unauthorized", "please_wait", "other"}}.items():
+                value = report.get(key)
+                checks[key] = value if isinstance(value, str) and value in allowed else None
+            self.instagram_key_check = {"status": "completed", **checks}
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            self.instagram_key_check = {"status": "unavailable"}
 
     def monitor(self, session_id, job):
         process = job["process"]
@@ -1111,7 +1138,8 @@ class RamosHandler(BaseHTTPRequestHandler):
         try:
             if urlsplit(self.path).path == "/api/health":
                 return self.reply(200, {"ok": True, "login_flow": "script-web-2fa-v2",
-                                        "revision": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "local")})
+                                        "revision": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "local"),
+                                        "instagram_key_check": self.server.service.instagram_key_check})
             path = urlsplit(self.path).path
             if path.startswith("/api/") or not os.environ.get("RAMOS_ADMIN_PASSWORD"):
                 self.access()
@@ -1213,6 +1241,7 @@ def main():
             print(json.dumps({'event': 'ramos_proxy_check', **result['check']}, ensure_ascii=False), flush=True)
         threading.Thread(target=check_initial_proxy, daemon=True).start()
     server = make_server(service, args.port)
+    threading.Thread(target=service.check_instagram_key, daemon=True).start()
     service.resume_runs()
     print(json.dumps({'event': 'ramos_executor_ready', 'mode': 'server',
                       'continuous_default': service.data['settings']['continuous_execution'],

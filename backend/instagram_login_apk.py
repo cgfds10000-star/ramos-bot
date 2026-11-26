@@ -57,7 +57,7 @@ import unicodedata
 from urllib.parse import urlsplit
 
 CLIENT_VERSION = "3.2.19"
-REVISION = "caa-6-web-password-key-domain"
+REVISION = "caa-7-script-key-headers"
 PRIVATE_TRANSPORT = "curl"
 
 
@@ -720,7 +720,6 @@ def load_client_class():
             self.authenticator_branch = None
             self.caa_password_key = None
             self.password_key_source = None
-            self.password_key_domain = None
             super().__init__(*args, **kwargs)
 
         def password_publickeys(self):
@@ -729,26 +728,9 @@ def load_client_class():
             if self.caa_password_key is not None:
                 self.password_key_source = "caa_headers"
                 return self.caa_password_key
-            if self.password_key_domain:
-                # No worker web, manter a configuração pré-login no domínio CAA.
-                # Uma única chamada: nenhuma troca de rota após uma recusa.
-                from instagrapi.exceptions import ClientError
-                from instagrapi.mixins.bloks import CAA_API_DOMAIN
-                if self.password_key_domain != CAA_API_DOMAIN:
-                    raise FlowError("Dominio inesperado na preparacao da senha.")
-                self.password_key_source = "launcher_sync_caa"
-                self.private_requests_count += 1
-                self._send_private_request(
-                    "launcher/sync/", data={"id": self.uuid, "server_config_retrieval": "1"},
-                    login=True, domain=CAA_API_DOMAIN, return_response=True,
-                    headers={"Authorization": None},
-                )
-                key = password_key_from_response(self.last_response)
-                if key is None:
-                    raise ClientError("Instagram did not return a valid password encryption key",
-                                      response=self.last_response)
-                return key
             self.password_key_source = "launcher_sync"
+            # O núcleo validado lê os headers antes de julgar o corpo HTTP.
+            # Um 4xx de configuração pode conter a chave pública necessária.
             return super().password_publickeys()
 
         def private_request(self, endpoint, *args, **kwargs):
@@ -872,6 +854,9 @@ def load_client_class():
                 domain = kwargs.get("domain") or "i.instagram.com"
                 if domain in {"i.instagram.com", "b.i.instagram.com"}:
                     entry["dominio"] = domain
+                if category == "chave_criptografia_senha":
+                    entry["resposta_chave"] = password_key_summary(response)
+                    entry["erro"] = entry["erro"] or entry["resposta_chave"]["error_type"]
                 if category in {"caa_login", "verificacao_entrada", "verificacao_tela_codigo", "verificacao_envio_codigo"}:
                     try:
                         entry["estrutura_bloks"] = bloks_shape_summary(self, data)
@@ -894,7 +879,10 @@ def password_key_from_response(response):
     status = getattr(response, "status_code", None)
     if not isinstance(status, int) or not 200 <= status < 300:
         return None
-    headers = getattr(response, "headers", {})
+    return password_key_from_headers(getattr(response, "headers", {}))
+
+
+def password_key_from_headers(headers):
     key_id = headers.get("ig-set-password-encryption-key-id", "")
     public_key = headers.get("ig-set-password-encryption-pub-key", "")
     if (not isinstance(key_id, str) or not re.fullmatch(r"[0-9]{1,3}", key_id)
@@ -908,6 +896,33 @@ def password_key_from_response(response):
     except (ValueError, IndexError, TypeError):
         return None
     return int(key_id), public_key
+
+
+def password_key_summary(response):
+    """Metadados limitados; nenhuma chave, corpo, cookie ou autorização é exposta."""
+    headers = getattr(response, "headers", {})
+    data = {}
+    content_type = str(headers.get("content-type", "")).lower()
+    body_kind = "json" if "json" in content_type else "html" if "html" in content_type else "other"
+    try:
+        if len(getattr(response, "content", b"")) <= 16384:
+            parsed = response.json()
+            if isinstance(parsed, dict):
+                data = parsed
+    except (ValueError, AttributeError, TypeError):
+        pass
+    categories = {"useragent mismatch": "useragent_mismatch", "login_required": "login_required",
+                  "invalid signature": "invalid_signature", "unauthorized": "unauthorized",
+                  "not authorized": "unauthorized", "please wait a few minutes": "please_wait"}
+    message = data.get("message")
+    category = categories.get(message.strip().casefold(), "other") if isinstance(message, str) else None
+    status = getattr(response, "status_code", None)
+    return {"http": status if isinstance(status, int) else None,
+            "key_id_header": bool(headers.get("ig-set-password-encryption-key-id")),
+            "public_key_header": bool(headers.get("ig-set-password-encryption-pub-key")),
+            "valid_key_headers": password_key_from_headers(headers) is not None,
+            "body_kind": body_kind, "error_type": safe_symbol(data.get("error_type")),
+            "message_category": category}
 
 
 def endpoint_category(endpoint):

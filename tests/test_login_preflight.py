@@ -16,6 +16,7 @@ from instagrapi import Client
 from instagrapi.exceptions import ClientError
 import instagram_login_apk as core
 import worker
+import key_probe
 from app import RamosService
 
 
@@ -82,44 +83,81 @@ class PasswordPreflightChecks(unittest.TestCase):
             with self.subTest(status=status, headers=list(headers)):
                 self.assertIsNone(core.password_key_from_response(SimpleNamespace(status_code=status, headers=headers)))
 
-    def test_web_key_request_uses_caa_url_and_host_without_credentials(self):
-        self.client.password_key_domain = 'b.i.instagram.com'
-        self.client.private.headers['Authorization'] = 'synthetic-stale-authorization'
+    def test_script_key_headers_work_even_when_configuration_body_is_401(self):
         requests = []
 
         def transport(request, **_kwargs):
             requests.append(request)
             response = Response()
-            response.status_code = 200 if request.url == 'https://b.i.instagram.com/api/v1/launcher/sync/' else 401
-            response._content = b'{"status":"ok"}'
+            response.status_code = 401
+            response._content = b'{"message":"Unauthorized","status":"fail"}'
             response.url = request.url
             response.request = request
-            response.headers.update(self.headers if response.status_code == 200 else {})
+            response.headers.update(self.headers)
+            response.headers['content-type'] = 'application/json'
             return response
 
         with patch.object(self.client.private, 'send', side_effect=transport):
             encrypted = self.client.password_encrypt('synthetic-password')
         self.assertEqual(len(requests), 1)
         self.assertEqual(requests[0].method, 'POST')
-        self.assertEqual(requests[0].headers['Host'], 'b.i.instagram.com')
+        self.assertEqual(requests[0].url, 'https://i.instagram.com/api/v1/launcher/sync/')
+        self.assertEqual(requests[0].headers['Host'], 'i.instagram.com')
         self.assertNotIn('Authorization', requests[0].headers)
         self.assertNotIn('synthetic-password', requests[0].body)
         self.assertTrue(encrypted.startswith('#PWD_INSTAGRAM:4:'))
-        self.assertEqual(self.client.password_key_source, 'launcher_sync_caa')
+        self.assertEqual(self.client.password_key_source, 'launcher_sync')
         self.assertEqual(self.client.login_trace[-1]['etapa'], 'chave_criptografia_senha')
-        self.assertEqual(self.client.login_trace[-1]['dominio'], 'b.i.instagram.com')
+        self.assertEqual(self.client.login_trace[-1]['dominio'], 'i.instagram.com')
+        self.assertTrue(self.client.login_trace[-1]['resposta_chave']['valid_key_headers'])
+        self.assertFalse(self.client.user_id)
 
-    def test_web_key_refusal_stops_before_encrypting_without_trying_another_host(self):
-        self.client.password_key_domain = 'b.i.instagram.com'
+    def test_missing_headers_stop_before_encrypting_without_trying_another_host(self):
         response = Response()
         response.status_code = 401
-        # Uma resposta recusada não é aceita como preparação válida.
-        response.headers.update(self.headers)
+        response._content = b'{"message":"Unauthorized"}'
         with patch.object(self.client, '_send_private_request', side_effect=lambda *_a, **_k: setattr(self.client, 'last_response', response)) as send:
             with self.assertRaises(ClientError):
                 self.client.password_encrypt('synthetic-password')
         send.assert_called_once()
-        self.assertEqual(send.call_args.kwargs['domain'], 'b.i.instagram.com')
+        self.assertNotIn('domain', send.call_args.kwargs)
+
+    def test_key_probe_never_logs_in_or_persists_a_session(self):
+        response = Response()
+        response.status_code = 401
+        response.headers.update(self.headers)
+        response.headers['content-type'] = 'application/json'
+        response._content = b'{"message":"synthetic-private-error"}'
+        self.client.last_response = response
+        with patch.object(core, 'configure_client', return_value=self.client), \
+                patch.object(self.client, 'password_publickeys', return_value=(7, self.public_key)), \
+                patch.object(Client, 'login', side_effect=AssertionError('No login allowed')) as login, \
+                patch.object(core, 'save_client') as save:
+            report = key_probe.probe()
+        self.assertTrue(report['available'])
+        self.assertEqual(report['message_category'], 'other')
+        login.assert_not_called()
+        save.assert_not_called()
+        self.assertNotIn(self.public_key, json.dumps(report))
+        self.assertNotIn('synthetic-private-error', json.dumps(report))
+
+    def test_startup_probe_publishes_only_approved_anonymous_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = RamosService(directory, dependency_check=lambda: True)
+            try:
+                result = SimpleNamespace(returncode=0, stdout=json.dumps({
+                    'available': False, 'http': 401, 'key_id_header': False,
+                    'public_key_header': False, 'valid_key_headers': False,
+                    'body_kind': 'json', 'message_category': 'useragent_mismatch',
+                    'private': 'synthetic-secret', 'error_type': 'synthetic-secret'}))
+                with patch('app.subprocess.run', return_value=result) as run:
+                    service.check_instagram_key()
+                run.assert_called_once()
+                self.assertEqual(json.loads(run.call_args.kwargs['input']), {'proxy': ''})
+                self.assertEqual(service.instagram_key_check['message_category'], 'useragent_mismatch')
+                self.assertNotIn('synthetic-secret', json.dumps(service.instagram_key_check))
+            finally:
+                service.close()
 
 
 class SavedLoginProfileChecks(unittest.TestCase):
@@ -132,7 +170,7 @@ class SavedLoginProfileChecks(unittest.TestCase):
             observed = []
 
             def login(client, handle, password):
-                observed.append((client.private_transport, client.phone_id, handle, client.password_key_domain))
+                observed.append((client.private_transport, client.phone_id, handle))
                 client.authorization_data = {'ds_user_id': '123', 'sessionid': 'synthetic-session'}
                 return True
 
@@ -141,7 +179,7 @@ class SavedLoginProfileChecks(unittest.TestCase):
                 worker.run({'directory': directory, 'username': 'teste', 'password': 'synthetic-password', 'mode': 'login'})
             events = [json.loads(line) for line in output.getvalue().splitlines()]
             self.assertEqual(events[-1], {'type': 'done', 'ok': True, 'authenticated': True})
-            self.assertEqual(observed, [('curl', old_client.phone_id, 'teste', 'b.i.instagram.com')])
+            self.assertEqual(observed, [('curl', old_client.phone_id, 'teste')])
             saved = worker.read_json(Path(directory) / 'session.json')
             self.assertEqual(saved['private_transport'], 'curl')
             self.assertEqual(saved['uuids'], old_settings['uuids'])

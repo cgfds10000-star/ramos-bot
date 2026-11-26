@@ -155,8 +155,6 @@ def _run(payload, core):
         # Match the CLI login flow: let the Instagram response determine whether
         # the same challenge is TOTP, SMS, email, or a backup code.
         client.two_factor_method = payload.get("two_factor_method", "auto")
-        from instagrapi.mixins.bloks import CAA_API_DOMAIN
-        client.password_key_domain = CAA_API_DOMAIN
         client._ramos_proxy_enabled = bool(payload.get("proxy"))
         apply_instagram_proxy(client, payload.get("proxy", ""))
         handle = core.valid_username(payload["username"])
