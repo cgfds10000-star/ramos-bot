@@ -152,6 +152,28 @@ class WebTwoFactorChecks(unittest.TestCase):
         self.assertEqual(events[-1]['ok'], False)
         validate.assert_not_called()
 
+    def test_worker_reports_safe_exception_type_and_saves_safe_diagnostic(self):
+        self.client.device_settings = {'app_version': 'synthetic', 'version_code': '1'}
+        self.client.login = Mock(side_effect=TypeError('private synthetic detail'))
+        output = io.StringIO()
+        written = []
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(core, 'configure_client', return_value=self.client), \
+                patch.object(core, 'save_client'), \
+                patch.object(worker, 'apply_instagram_proxy'), \
+                patch.object(worker, 'write_json', side_effect=lambda path, value: written.append((path, value))), \
+                patch.object(worker, 'OUTPUT', output):
+            worker.run({'directory': directory, 'username': 'teste', 'password': 'synthetic-password',
+                        'mode': 'login', 'two_factor_method': 'auto'})
+        events = [json.loads(line) for line in output.getvalue().splitlines()]
+        error_message = next(event['message'] for event in events if event['type'] == 'log' and event['tone'] == 'error')
+        diagnostic = next(value for path, value in written if Path(path).name == 'diagnostic.json')
+        self.assertIn('TypeError', error_message)
+        self.assertEqual(diagnostic['excecao'], 'TypeError')
+        self.assertNotIn('private synthetic detail', error_message)
+        self.assertNotIn('private synthetic detail', json.dumps(diagnostic))
+        self.assertNotIn('synthetic-password', output.getvalue())
+
     def test_generic_script_getpass_is_bridged_for_totp_sms_and_backup_codes(self):
         for code, sms, method in [('003754', False, 'totp'), ('003754', True, 'sms'), ('00123456', False, 'backup_codes')]:
             with self.subTest(method=method):

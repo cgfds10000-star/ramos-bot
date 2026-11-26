@@ -106,6 +106,7 @@ def _run(payload, core):
     session_path = directory / "session.json"
     client = None
     authenticated = False
+    failure = None
     password = payload.pop("password", "")
     try:
         # load_settings da biblioteca usa JSON puro; a sessão é descriptografada
@@ -182,12 +183,17 @@ def _run(payload, core):
             emit("log", tone="success", message="Operação concluída.")
         emit("done", ok=True, authenticated=authenticated)
     except Exception as error:
+        failure = error
         name = type(error).__name__
         if name in {"LoginRequired", "ClientUnauthorizedError"}:
             authenticated = False
         message = ERRORS.get(name, "Não foi possível concluir a operação. Confira sua conexão e o estado da conta no Instagram.")
         if isinstance(error, core.FlowError):
             message = str(error)
+        elif name not in ERRORS:
+            symbol = core.safe_symbol(name)
+            if symbol:
+                message += " Tipo do erro: " + symbol + "."
         emit("log", tone="error", message=message)
         emit("done", ok=False, authenticated=authenticated)
     finally:
@@ -196,7 +202,8 @@ def _run(payload, core):
             client.password = None
             try:
                 core.save_client(client, session_path)
-                core.save_private_json(directory / "diagnostic.json", core.safe_diagnostic(client, "autenticado" if authenticated else "recusado"))
+                core.save_private_json(directory / "diagnostic.json", core.safe_diagnostic(
+                    client, "autenticado" if authenticated else "recusado", error=failure))
             except OSError:
                 emit("log", tone="error", message="Não foi possível salvar a sessão no servidor.")
 
