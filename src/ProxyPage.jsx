@@ -1,5 +1,5 @@
 import React, {useEffect, useState} from 'react';
-import {Check, Eye, EyeOff, Globe2, LoaderCircle, LockKeyhole, MonitorCog, Network, RefreshCw, Server, ShieldCheck, UserRound} from 'lucide-react';
+import {Eye, EyeOff, Globe2, LoaderCircle, LockKeyhole, MonitorCog, Network, RefreshCw, Server, ShieldCheck, UserRound} from 'lucide-react';
 
 function savedFields(proxy) {
   return {host: proxy.host || '', port: String(proxy.port || ''), scheme: proxy.scheme || 'http', username: '', password: ''};
@@ -59,8 +59,7 @@ export default function ProxyPage({api, proxy, online, busy, refresh}) {
   }
 
   return <main className="proxy-page" aria-label="Proxy">
-    <section className="proxy-card" aria-labelledby="proxy-title">
-      <div className="proxy-heading"><ShieldCheck className="proxy-heading-icon" aria-hidden="true"/><div><h1 id="proxy-title">Proxy</h1><p>Configure e gerencie a conexão do seu proxy.</p></div><span className={`proxy-badge ${proxy.enabled ? 'enabled' : ''}`}><i/>{proxy.enabled ? 'Ativado' : 'Desativado'}</span></div>
+    <section className="proxy-card" aria-label="Conexão do proxy">
       <form className="proxy-form" onSubmit={save}>
         <label className="proxy-toggle"><MonitorCog aria-hidden="true"/><span>Usar proxy</span><input type="checkbox" role="switch" checked={enabled} onChange={event => {setEnabled(event.target.checked); setNotice('');}} disabled={pending || busy}/><span className="proxy-switch" aria-hidden="true"/></label>
         <div className="proxy-fields">
@@ -70,7 +69,6 @@ export default function ProxyPage({api, proxy, online, busy, refresh}) {
           <label className="proxy-field"><LockKeyhole aria-hidden="true"/><input type={visible ? 'text' : 'password'} aria-label="Senha do proxy" placeholder={proxy.has_auth && !clearAuth ? 'Senha salva' : 'Password'} value={fields.password} onChange={event => edit('password', event.target.value)} autoComplete="new-password" maxLength={500} disabled={pending || busy}/><button type="button" className="proxy-eye" aria-label={visible ? 'Ocultar senha do proxy' : 'Mostrar senha do proxy'} onClick={() => setVisible(value => !value)}>{visible ? <EyeOff/> : <Eye/>}</button></label>
         </div>
         <details className="proxy-advanced"><summary>Configuração avançada</summary><label>Tipo de proxy<select aria-label="Tipo de proxy" value={fields.scheme} onChange={event => edit('scheme', event.target.value)} disabled={pending || busy}><option value="http">HTTP</option><option value="https">HTTPS</option><option value="socks5h">SOCKS5</option></select></label>{proxy.has_auth && <button type="button" disabled={pending || busy || clearAuth} onClick={() => {setClearAuth(true); setAuthEdits({}); setFields(previous => ({...previous, username: '', password: ''}));}}>{clearAuth ? 'Credenciais serão removidas ao salvar' : 'Remover credenciais salvas'}</button>}</details>
-        <div className="proxy-scope" aria-label="Conexões que usam o proxy quando ativado"><span><i><Check aria-hidden="true"/></i>2FA</span><span><i><Check aria-hidden="true"/></i>Sessões</span><span><i><Check aria-hidden="true"/></i>Viralize</span></div>
         <div className="proxy-ip-row" aria-live="polite"><Globe2 aria-hidden="true"/><strong>IP de saída</strong><span className={check?.status === 'ok' && proxy.enabled ? 'verified' : ''}>{checking ? 'Verificando…' : !proxy.enabled ? 'Proxy desativado' : check?.status === 'ok' ? check.ip : check?.status === 'error' ? 'Não verificado' : 'Aguardando verificação'}</span></div>
         {proxy.enabled && <button type="button" className="proxy-test-button" onClick={test} disabled={!online || checking || changed}><RefreshCw size={17} className={checking ? 'spin' : ''}/>Verificar conexão</button>}
         <button className="proxy-save" disabled={!online || pending || busy}>{pending ? <LoaderCircle className="spin"/> : <ShieldCheck/>}<span>{pending ? 'Aplicando…' : 'Salvar e aplicar'}</span></button>

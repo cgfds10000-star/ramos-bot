@@ -85,7 +85,7 @@ body:has(#root > .app-shell) #root{height:100dvh;overflow:hidden}
 #root > .app-shell > nav.bottom-nav button:hover:not(.active){border-color:#aa62cb;background:#321c40}
 
 .settings-page{margin:clamp(18px,calc(30 * var(--u)),30px) max(12px,calc(25 * var(--u))) 0}
-.continuous-execution-card{
+.continuous-execution-card,.settings-api-card{
   display:flex;
   align-items:center;
   justify-content:space-between;
@@ -98,6 +98,7 @@ body:has(#root > .app-shell) #root{height:100dvh;overflow:hidden}
   box-shadow:inset 0 1px 0 #ba6fe622;
   cursor:pointer;
 }
+.settings-api-card{display:block;min-height:0;margin-top:16px;cursor:default}
 .continuous-execution-card>span{
   min-width:0;
   color:#faf6ff;
@@ -137,6 +138,17 @@ body:has(#root > .app-shell) #root{height:100dvh;overflow:hidden}
 .continuous-execution-card input:disabled{cursor:wait;opacity:.6}
 .continuous-execution-card:has(input:disabled){cursor:default}
 @media(prefers-reduced-motion:reduce){.continuous-execution-card input,.continuous-execution-card input::before{transition:none}}
+
+.settings-api-card h2{color:#faf6ff;font-size:clamp(1.125rem,calc(32 * var(--u)),2rem);line-height:1.25;margin-bottom:16px}
+.settings-api-field{display:flex;align-items:center;gap:12px;min-height:52px;padding-left:14px;border:1px solid #9452b2;border-radius:14px;background:#130b1f80;color:#d9b5ed}
+.settings-api-field>svg{width:24px;height:24px;flex-shrink:0}
+.settings-api-field input{flex:1;min-width:0;width:100%;height:52px;padding:0;background:none;border:0;color:#fff;font-size:1rem;outline:none}
+.settings-api-field input::placeholder{color:#b7a5c8}
+.settings-api-field:focus-within{outline:2px solid #c878ef;outline-offset:2px}
+.settings-api-field button{display:grid;place-items:center;align-self:stretch;width:48px;flex-shrink:0;padding:0;background:none;color:inherit;border-radius:14px}
+.settings-api-field button svg{width:24px;height:24px}
+.settings-api-field input:disabled{opacity:.6;cursor:default}
+.settings-key-error{margin:12px 0 0;color:#f2b3ce;font-size:.875rem;line-height:1.4}
 
 @media(max-width:360px){
   #root > .app-shell > nav.bottom-nav{gap:3px;padding:5px;border-radius:23px}

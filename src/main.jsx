@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Bot, CalendarDays, Download, Fingerprint, Instagram, Link2, List, LoaderCircle, Monitor, Play, Plus, Power, Search, Settings, ShieldCheck, Square, Trash2, UsersRound, Workflow, X } from 'lucide-react';
+import { Bot, CalendarDays, Download, Eye, EyeOff, Fingerprint, Instagram, KeyRound, Link2, List, LoaderCircle, Monitor, Play, Plus, Power, Search, Settings, ShieldCheck, Square, Trash2, UsersRound, Workflow, X } from 'lucide-react';
 import { RamosApi, parseCommand, selectSession, sessionBusy, executionActive } from './api.js';
 import MacrosPage from './MacrosPage.jsx';
 import LogsPage from './LogsPage.jsx';
@@ -17,6 +17,8 @@ import './proxy.css';
 import './premium.css';
 
 const api = new RamosApi();
+const VIRALIZE_KEY_STORAGE = 'ramos.viralize.apiKey';
+const VIRALIZE_KEY_PATTERN = /^vzs_[A-Za-z0-9_-]{1,480}$/;
 const empty = { sessions: [], accounts: [], macros: [], logs: [], proxy: { enabled: false }, settings: { two_factor_method: 'auto' } };
 
 
@@ -35,6 +37,14 @@ function App() {
   const [panel, setPanel] = useState(null);
   const [page, setPage] = useState('sessions');
   const [macroSelection, setMacroSelection] = useState([]);
+  const [macroBusy, setMacroBusy] = useState(false);
+  const [apiKey, setApiKey] = useState(() => {
+    try { return localStorage.getItem(VIRALIZE_KEY_STORAGE) || ''; }
+    catch { return ''; }
+  });
+  const [showApiKey, setShowApiKey] = useState(false);
+  const validApiKey = VIRALIZE_KEY_PATTERN.test(apiKey.trim());
+  const apiKeyLocked = macroBusy || Object.values(state.viralize || {}).some(executionActive);
   const [accessLocked, setAccessLocked] = useState(false);
   const [panelPassword, setPanelPassword] = useState('');
   const [filter, setFilter] = useState('');
@@ -89,6 +99,14 @@ function App() {
     if (valid && selected !== valid.id) setSelected(valid.id);
   }, [state.sessions, selected]);
   useEffect(() => { localStorage.setItem('ramos.selected', selected); }, [selected]);
+  useEffect(() => {
+    try {
+      const normalized = apiKey.trim();
+      if (VIRALIZE_KEY_PATTERN.test(normalized)) localStorage.setItem(VIRALIZE_KEY_STORAGE, normalized);
+      else if (!normalized) localStorage.removeItem(VIRALIZE_KEY_STORAGE);
+    } catch { /* armazenamento local pode estar bloqueado pelo navegador */ }
+  }, [apiKey]);
+  useEffect(() => { if (page !== 'settings') setShowApiKey(false); }, [page]);
   useEffect(() => { document.querySelector('.app-shell > main')?.scrollTo({ top: 0, left: 0 }); }, [page]);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 3500); return () => clearTimeout(timer); }, [toast]);
 
@@ -169,11 +187,20 @@ function App() {
       <a className="brand" href="#" onClick={event => { event.preventDefault(); setPanel(null); setPage('sessions'); }} aria-label="Ramos Bot, início"><span className="brand-mark"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M5 5h24c20 0 20 26 3 26l14 14H32L14 26h14c9 0 9-11 0-11H15z" fill="currentColor"/><path d="M6 15l10 10v20H6z" fill="#00c8ed"/></svg></span><span>RAMOS <strong>BOT</strong></span></a>
     </header>
 
-    {page === 'macros' ? <MacrosPage sessions={state.sessions} api={api} refresh={refresh} status={state.viralize || {}} pacingProfiles={state.viralize_pacing} online={online} selectedIds={macroSelection} onSelectionChange={setMacroSelection}/> : page === 'logs' ? <LogsPage logs={state.logs} sessions={state.sessions} online={online} checking={checking}/> : page === 'proxy' ? <ProxyPage api={api} proxy={state.proxy} online={online} busy={state.sessions.some(sessionBusy) || Object.values(state.viralize || {}).some(executionActive)} refresh={refresh}/> : page === 'settings' ? <main className="settings-page" aria-label="Configurações">
+    {page === 'macros' ? <MacrosPage apiKey={apiKey} validKey={validApiKey} busy={macroBusy} setBusy={setMacroBusy} onConfigure={() => openPanel('settings')} sessions={state.sessions} api={api} refresh={refresh} status={state.viralize || {}} pacingProfiles={state.viralize_pacing} online={online} selectedIds={macroSelection} onSelectionChange={setMacroSelection}/> : page === 'logs' ? <LogsPage logs={state.logs} sessions={state.sessions} online={online} checking={checking}/> : page === 'proxy' ? <ProxyPage api={api} proxy={state.proxy} online={online} busy={state.sessions.some(sessionBusy) || Object.values(state.viralize || {}).some(executionActive)} refresh={refresh}/> : page === 'settings' ? <main className="settings-page" aria-label="Configurações">
       <label className="continuous-execution-card" aria-busy={pending}>
         <span>Execução contínua</span>
         <input type="checkbox" role="switch" checked={state.settings.continuous_execution !== false} disabled={!online || checking || pending} onChange={event => saveContinuousExecution(event.target.checked)}/>
       </label>
+      <section className="settings-api-card" aria-labelledby="settings-api-key-title">
+        <h2 id="settings-api-key-title">Chave da API</h2>
+        <div className="settings-api-field">
+          <KeyRound aria-hidden="true"/>
+          <input type={showApiKey ? 'text' : 'password'} aria-labelledby="settings-api-key-title" placeholder="Cole sua chave de API" value={apiKey} onChange={event => setApiKey(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck="false" maxLength={512} disabled={apiKeyLocked} aria-invalid={Boolean(apiKey.trim()) && !validApiKey} aria-describedby={apiKey.trim() && !validApiKey ? 'settings-api-key-error' : undefined}/>
+          <button type="button" aria-label={showApiKey ? 'Ocultar chave da API' : 'Mostrar chave da API'} aria-pressed={showApiKey} onClick={() => setShowApiKey(value => !value)}>{showApiKey ? <EyeOff aria-hidden="true"/> : <Eye aria-hidden="true"/>}</button>
+        </div>
+        {apiKey.trim() && !validApiKey && <p id="settings-api-key-error" className="settings-key-error" role="status">Use uma chave válida do Viralize, começando com vzs_.</p>}
+      </section>
       {error && <div className="error-banner" role="alert">{error}</div>}
     </main> : <main inert={Boolean(panel)}>
       <section className="welcome"><h1>Bem-vindo, <span>Carlos</span></h1><p>Gerencie suas sessões, contas, proxy e macros.</p></section>

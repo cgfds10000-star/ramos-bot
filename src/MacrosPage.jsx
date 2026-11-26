@@ -1,18 +1,11 @@
 import {executionActive} from './api.js';
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, Clock3, Eye, EyeOff, KeyRound, Layers3, Minus, Monitor, Play, Plus, RefreshCw, Square } from 'lucide-react';
+import { Check, ChevronDown, Clock3, Layers3, LoaderCircle, Minus, Monitor, Play, Plus, RefreshCw, Square } from 'lucide-react';
 
-const VIRALIZE_KEY_STORAGE = 'ramos.viralize.apiKey';
-const VIRALIZE_KEY_PATTERN = /^vzs_[A-Za-z0-9_-]{1,480}$/;
 const SPEED_STORAGE = 'ramos.viralize.speed';
 const DEFAULT_PROFILES = {moderate: {label: 'Moderado'}, calm: {label: 'Pausado'}, slow: {label: 'Lento'}};
 
-export default function MacrosPage({ sessions, api, refresh, status, online, selectedIds, onSelectionChange, pacingProfiles }) {
-  const [apiKey, setApiKey] = useState(() => {
-    try { return localStorage.getItem(VIRALIZE_KEY_STORAGE) || ''; }
-    catch { return ''; }
-  });
-  const [showKey, setShowKey] = useState(false);
+export default function MacrosPage({ sessions, api, refresh, status, online, selectedIds, onSelectionChange, pacingProfiles, apiKey, validKey, busy, setBusy, onConfigure }) {
   const [linkedIds, setLinkedIds] = useState([]);
   const [taskType, setTaskType] = useState('follow');
   const [taskLimit, setTaskLimit] = useState('50');
@@ -20,18 +13,17 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
     try { const value = localStorage.getItem(SPEED_STORAGE); return Object.hasOwn(DEFAULT_PROFILES, value) ? value : 'moderate'; }
     catch { return 'moderate'; }
   });
-  const [now, setNow] = useState(() => api.serverNow());
-  const [busy, setBusy] = useState(false);
+  const [actionPending, setActionPending] = useState('');
   const [messages, setMessages] = useState({});
   const allCheckbox = useRef(null);
   const selected = sessions.filter(session => selectedIds.includes(session.id));
   const disconnected = selected.filter(session => !session.authenticated);
   const allSelected = sessions.length > 0 && selected.length === sessions.length;
   const someSelected = selected.length > 0 && !allSelected;
-  const running = Object.values(status).some(executionActive);
+  const activeSessions = sessions.filter(session => executionActive(status[session.id]));
+  const running = activeSessions.length > 0;
   const profiles = pacingProfiles || DEFAULT_PROFILES;
   const profile = profiles[speed];
-  const validKey = VIRALIZE_KEY_PATTERN.test(apiKey.trim());
   const numericLimit = Number(taskLimit);
   const validLimit = Number.isInteger(numericLimit) && numericLimit >= 1 && numericLimit <= 500;
   const canApply = online && !busy && validKey && selected.length > 0 && !disconnected.length && !running;
@@ -45,12 +37,6 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
     try { localStorage.setItem(SPEED_STORAGE, speed); } catch { /* armazenamento opcional */ }
   }, [speed]);
 
-  useEffect(() => {
-    if (!running) return;
-    setNow(api.serverNow());
-    const timer = setInterval(() => setNow(api.serverNow()), 1000);
-    return () => clearInterval(timer);
-  }, [running, api]);
 
   useEffect(() => {
     const activeIds = new Set(sessions.filter(session => session.authenticated).map(session => session.id));
@@ -59,26 +45,18 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
     setLinkedIds(ids => ids.filter(id => activeIds.has(id)));
   }, [sessions]);
 
-  useEffect(() => {
-    try {
-      const normalized = apiKey.trim();
-      if (VIRALIZE_KEY_PATTERN.test(normalized)) localStorage.setItem(VIRALIZE_KEY_STORAGE, normalized);
-      else if (!normalized) localStorage.removeItem(VIRALIZE_KEY_STORAGE);
-    } catch { /* armazenamento local pode estar bloqueado pelo navegador */ }
-  }, [apiKey]);
-
   function toggleSession(id) {
     onSelectionChange(ids => ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id]);
   }
 
   async function send(action, items) {
     if (busy || !online || !items.length) return;
-    setBusy(true);
+    setBusy(true); setActionPending(action);
     try {
       if (action === 'start') {
         try {
           const ids = items.map(session => session.id);
-          setMessages(previous => ({...previous, ...Object.fromEntries(ids.map(id => [id, 'Iniciando no servidor…']))}));
+          setMessages(previous => ({...previous, ...Object.fromEntries(ids.map(id => [id, '']))}));
           await api.post('/viralize/start', {session_ids: ids, token: apiKey.trim(), type: taskType, limit: numericLimit, speed});
           setMessages(previous => ({...previous, ...Object.fromEntries(ids.map(id => [id, '']))}));
         } catch (error) {
@@ -89,11 +67,11 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
       for (const session of items) {
         try {
           const path = `/sessions/${session.id}/${action === 'stop' ? 'stop' : `viralize/${action}`}`;
-          setMessages(previous => ({ ...previous, [session.id]: action === 'link' ? 'Vinculando conta…' : action === 'start' ? 'Iniciando rodada…' : action === 'skip' ? 'Pulando tarefa…' : 'Interrompendo…' }));
+          setMessages(previous => ({ ...previous, [session.id]: '' }));
           const body = action === 'stop' ? {} : { token: apiKey.trim(), type: taskType, speed, ...(action === 'start' ? { limit: numericLimit } : {}) };
           await api.post(path, body);
           if (action === 'link') setLinkedIds(ids => [...new Set([...ids, session.id])]);
-          setMessages(previous => ({ ...previous, [session.id]: action === 'link' ? 'Conta vinculada no Viralize.' : '' }));
+          setMessages(previous => ({ ...previous, [session.id]: '' }));
         } catch (error) {
           if (action === 'link') setLinkedIds(ids => ids.filter(id => id !== session.id));
           setMessages(previous => ({ ...previous, [session.id]: error.message || 'Não foi possível concluir esta operação.' }));
@@ -102,38 +80,18 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
         }
       }
     } finally {
-      setBusy(false);
+      setBusy(false); setActionPending('');
     }
   }
 
   return <main className="macros-page" aria-label="Macros">
-    <section className="macro-plugin-card" aria-labelledby="api-key-title">
-      <div className="macro-card-heading">
-        <h1 id="api-key-title">Chave da API</h1>
-        <span className="viralize-logo" role="img" aria-label="Viralize Sociais"/>
+
+    <section className="macro-execution-card" aria-labelledby="macro-execution-title" aria-busy={busy || running}>
+      <div className="macro-execution-state">
+        <h2 id="macro-execution-title">Execução</h2>
+        <span className={`macro-stopped ${running ? 'is-running' : ''}`}><Square aria-hidden="true" fill="currentColor"/>{running ? Object.values(status).some(run => run.status === 'running') ? 'Em andamento' : Object.values(status).some(run => run.status === 'recovering') ? 'Restaurando' : Object.values(status).some(run => run.status === 'waiting' && (run.phase?.startsWith('pace_') || run.phase === 'between_rounds')) ? 'Em intervalo' : 'Aguardando tarefas' : 'Parada'}</span>
       </div>
-
-      <div className="macro-api-field">
-        <KeyRound aria-hidden="true"/>
-        <input
-          type={showKey ? 'text' : 'password'}
-          aria-labelledby="api-key-title"
-          placeholder="Cole sua chave de API"
-          value={apiKey}
-          onChange={event => { setApiKey(event.target.value); setLinkedIds([]); setMessages({}); }}
-          autoComplete="off"
-          autoCapitalize="none"
-          spellCheck="false"
-          maxLength={512}
-          disabled={busy || running}
-        />
-        <button type="button" className="macro-key-toggle" aria-label={showKey ? 'Ocultar chave da API' : 'Mostrar chave da API'} aria-pressed={showKey} onClick={() => setShowKey(value => !value)}>
-          {showKey ? <EyeOff aria-hidden="true"/> : <Eye aria-hidden="true"/>}
-        </button>
-      </div>
-
-      <p className="macro-flow-note">A chave fica salva neste navegador. Ao vincular ou iniciar, o servidor a utiliza na integração com o Viralize.</p>
-
+    <div className="macro-session-picker">
       <fieldset className="macro-sessions" disabled={busy || running}>
         <legend>Sessões para executar</legend>
         <label className="macro-session-option macro-select-all">
@@ -152,17 +110,12 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
         {!sessions.length && <p className="macro-empty-sessions">Crie uma sessão na aba Sessões para começar.</p>}
       </fieldset>
 
-      <p className="macro-selection-count" aria-live="polite">{selected.length === 1 ? '1 sessão selecionada' : `${selected.length} sessões selecionadas`}</p>
-      {disconnected.length > 0 && <p className="macro-flow-note" role="status">Conecte {disconnected.length === 1 ? disconnected[0].name : 'as sessões selecionadas que estão desconectadas'} na aba Sessões antes de aplicar o plugin.</p>}
-      <button type="button" className="macro-apply-button" disabled={!canApply} onClick={() => send('link', selected)}><Plus aria-hidden="true"/>Aplicar plugin</button>
-    </section>
+      {!validKey && <button type="button" className="macro-configure-key" onClick={onConfigure}>Adicionar chave da API nas configurações</button>}
+      <div className="macro-selection-footer"><p className="macro-selection-count" aria-live="polite">{selected.length === 1 ? '1 sessão selecionada' : `${selected.length} sessões selecionadas`}</p>
+      <button type="button" className="macro-apply-button" disabled={!canApply} onClick={() => send('link', selected)}>{actionPending === 'link' ? <LoaderCircle className="spin" aria-hidden="true"/> : <Plus aria-hidden="true"/>}{actionPending === 'link' ? 'Vinculando…' : 'Aplicar plugin'}</button></div>
+      {disconnected.length > 0 && <p className="macro-flow-note" role="status">Conecte {disconnected.length === 1 ? disconnected[0].name : 'as sessões selecionadas'} antes de aplicar o plugin.</p>}
+    </div>
 
-    <section className="macro-execution-card" aria-labelledby="macro-execution-title" aria-busy={busy || running}>
-      <div className="macro-execution-state">
-        <h2 id="macro-execution-title">Execução</h2>
-        <p className="macro-execution-subtitle">Configurar e iniciar a execução das tarefas</p>
-        <span className={`macro-stopped ${running ? 'is-running' : ''}`}><Square aria-hidden="true" fill="currentColor"/>{running ? Object.values(status).some(run => run.status === 'running') ? 'Em andamento' : Object.values(status).some(run => run.status === 'recovering') ? 'Restaurando' : Object.values(status).some(run => run.status === 'waiting' && (run.phase?.startsWith('pace_') || run.phase === 'between_rounds')) ? 'Em intervalo' : 'Aguardando tarefas' : 'Parada'}</span>
-      </div>
       <label className="macro-task-type">
         <span className="macro-control-caption"><Layers3 aria-hidden="true"/><span>Tipo de tarefa</span></span>
         <span className="macro-select-wrap"><select value={taskType} onChange={event => setTaskType(event.target.value)} disabled={busy || running}>
@@ -184,22 +137,22 @@ export default function MacrosPage({ sessions, api, refresh, status, online, sel
         </label>
         <p id="macro-speed-help" className="macro-flow-note">Pausas variáveis ao aceitar, executar e confirmar.{profile?.task && <> Intervalo de {profile.task[0]}–{profile.task[1]} s entre tarefas e {profile.round[0]}–{profile.round[1]} s entre rodadas.</>}</p>
       </div>
-      <button type="button" className="macro-start-button" disabled={!canStart} onClick={() => send('start', selected)}><Play aria-hidden="true"/>Iniciar</button>
-      <ul className="macro-run-list" aria-live="polite">
-        {sessions.filter(session => status[session.id] || messages[session.id]).map(session => {
+      <button type="button" className={`macro-start-button ${running || actionPending === 'stop' ? 'is-stop' : ''}`} disabled={busy || !online || (!running && !canStart)} onClick={() => send(running ? 'stop' : 'start', running ? activeSessions : selected)}>
+        {actionPending === 'start' || actionPending === 'stop' ? <LoaderCircle className="spin" aria-hidden="true"/> : running ? <Square aria-hidden="true" fill="currentColor"/> : <Play aria-hidden="true"/>}
+        {actionPending === 'stop' ? 'Parando…' : actionPending === 'start' ? 'Iniciando…' : running ? 'Parar' : 'Iniciar'}
+      </button>
+      <hr className="macro-divider"/>
+      {sessions.some(session => messages[session.id] || ['error', 'attention'].includes(status[session.id]?.status)) && <ul className="macro-run-list" aria-live="polite">
+        {sessions.filter(session => messages[session.id] || ['error', 'attention'].includes(status[session.id]?.status)).map(session => {
           const run = status[session.id];
-          const paced = run?.phase?.startsWith('pace_') || run?.phase === 'between_rounds';
-          const stateLabel = run?.status === 'waiting' ? paced ? 'Em intervalo' : 'Aguardando tarefas' : run?.status === 'recovering' ? 'Restaurando' : run?.status === 'running' ? 'Em execução' : run?.status === 'done' ? 'Concluído' : run?.status === 'empty' ? 'Fila vazia' : run?.status === 'attention' ? 'Atenção' : run?.status === 'error' ? 'Erro' : '';
-          const remaining = Math.max(0, Math.ceil(((run?.next_check_at || 0) * 1000 - now) / 1000));
           return <li key={session.id}>
-            <div className="macro-run-heading"><strong>{session.name}</strong>{stateLabel && <span className={`macro-run-status is-${run.status}`}>{stateLabel}</span>}</div>
-            <p>{messages[session.id] || run?.message}</p>{run && <p>{run.completed_total || 0} tarefas enviadas para análise · Rodada {run.round || 1} · Execução no servidor</p>}
-            {executionActive(run) && run.next_check_at && <p className="macro-countdown"><Clock3 size={16} aria-hidden="true"/>{remaining > 0 ? `Próxima etapa em ${remaining} s` : 'Retomando…'} · {profiles[run.speed]?.label || 'Moderado'}</p>}
-            {executionActive(run) && <button type="button" className="text-button" disabled={busy || !online} onClick={() => send('stop', [session])}>Interromper</button>}
+            <strong>{session.name}</strong>
+            <p role="status">{messages[session.id] || run?.message}</p>
             {run?.can_skip && <button type="button" className="text-button" disabled={busy || !online || !validKey || !session.authenticated || !linkedIds.includes(session.id)} onClick={() => send('skip', [session])}>Pular tarefa</button>}
           </li>;
         })}
-      </ul>
+      </ul>}
+
     </section>
   </main>;
 }
