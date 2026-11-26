@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Bot, Bell, CalendarDays, Download, EllipsisVertical, Fingerprint, Instagram, Link2, List, Menu, Monitor, Play, Plus, Power, Radio, Search, Settings, Settings2, ShieldCheck, Square, Trash2, UsersRound, Workflow, X } from 'lucide-react';
+import { Bot, CalendarDays, Download, Fingerprint, Instagram, Link2, List, LoaderCircle, Monitor, Play, Plus, Power, Radio, Search, Settings, Settings2, ShieldCheck, Square, Trash2, UsersRound, Workflow, X } from 'lucide-react';
 import { RamosApi, parseCommand, selectSession, sessionBusy, executionActive } from './api.js';
 import MacrosPage from './MacrosPage.jsx';
 import LogsPage from './LogsPage.jsx';
@@ -132,11 +132,6 @@ function App() {
     setPanel(value);
   }
 
-  async function addSession() {
-    const result = await act(() => api.post('/sessions'));
-    if (result) { setPage('sessions'); setSelected(result.session_id); }
-  }
-
   function downloadJson(value, name) {
     if (appMessage({action:'export', name, text:JSON.stringify(value, null, 2)})) return;
     const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], {type:'application/json'}));
@@ -171,10 +166,6 @@ function App() {
   return <div className={`app-shell ${page === 'sessions' ? 'is-home' : `is-${page}`}`}>
     <header className="header" inert={Boolean(panel)}>
       <a className="brand" href="#" onClick={event => { event.preventDefault(); setPanel(null); setPage('sessions'); }} aria-label="Ramos Bot, início"><span className="brand-mark"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M5 5h24c20 0 20 26 3 26l14 14H32L14 26h14c9 0 9-11 0-11H15z" fill="currentColor"/><path d="M6 15l10 10v20H6z" fill="#00c8ed"/></svg></span><span>RAMOS <strong>BOT</strong></span></a>
-      <div className="header-actions">
-        <IconButton label="Atividade recente" onClick={() => openPanel('logs')}><Bell size={23}/>{state.logs.some(item => item.tone === 'error') && <i className="notification-dot"/>}</IconButton>
-        <IconButton label="Mais opções" onClick={() => openPanel('menu')}><Menu size={25}/></IconButton>
-      </div>
     </header>
 
     {page === 'macros' ? <MacrosPage sessions={state.sessions} api={api} refresh={refresh} status={state.viralize || {}} pacingProfiles={state.viralize_pacing} online={online} selectedIds={macroSelection} onSelectionChange={setMacroSelection}/> : page === 'logs' ? <LogsPage logs={state.logs} sessions={state.sessions} online={online} checking={checking} onExport={exportLogs}/> : page === 'proxy' ? <ProxyPage api={api} proxy={state.proxy} online={online} busy={state.sessions.some(sessionBusy) || Object.values(state.viralize || {}).some(executionActive)} refresh={refresh}/> : page === 'settings' ? <main className="tool-page" aria-label={page === 'proxy' ? 'Proxy' : 'Configurações'}><section className="tool-page-card"><div className="tool-page-heading">{page === 'proxy' ? <ShieldCheck aria-hidden="true"/> : <Settings aria-hidden="true"/>}<h1>{page === 'proxy' ? 'Proxy' : 'Configurações'}</h1></div>{toolForms[page]}{error && <div className="error-banner" role="alert">{error}</div>}</section></main> : <main inert={Boolean(panel)}>
@@ -186,15 +177,12 @@ function App() {
         <button onClick={() => openPanel('macros')}><Play/><span>Macros</span><strong>{state.macros.length}</strong></button>
       </section>
 
-      <button className="new-session-button" onClick={addSession} disabled={!online || pending}><Plus size={27}/>Nova sessão</button>
-
       <section className="sessions-home">
         <div className="sessions-heading"><h2><Monitor size={23}/>Minhas Sessões <span>({state.sessions.length})</span></h2><span className={`connection ${online ? 'is-online' : ''}`}><i/>{checking ? 'Conectando' : online ? 'Online' : 'Offline'}</span></div>
         <label className="session-search"><Search size={20}/><input aria-label="Buscar sessão" placeholder="Buscar sessão..." value={filter} onChange={event => setFilter(event.target.value)}/></label>
         <div className="session-list">{state.sessions.filter(item => item.name.toLowerCase().includes(filter.toLowerCase())).map(item => <div className="session-row" key={item.id}>
           <button className="session-open" onClick={() => setSelected(item.id)} aria-pressed={selected === item.id}><strong>{item.name}</strong><span>{item.authenticated ? <><Instagram size={14}/>@{state.accounts.find(value => value.id === item.account_id)?.username}</> : <><CalendarDays size={14}/>{item.created_at ? 'Criada em ' + new Date(item.created_at).toLocaleDateString('pt-BR') + ' às ' + new Date(item.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : 'Pronta para conectar'}</>}</span></button>
           <span className={`session-pill ${item.authenticated ? 'active' : sessionBusy(item) ? 'working' : ''}`}><i/>{item.authenticated ? 'Ativa' : sessionBusy(item) ? (item.status === 'awaiting_input' ? '2FA' : 'Em uso') : 'Pronta'}</span>
-          <IconButton label={'Opções de ' + item.name} onClick={() => { setSelected(item.id); openPanel('menu'); }}><EllipsisVertical size={23}/></IconButton>
         </div>)}{filter && !state.sessions.some(item => item.name.toLowerCase().includes(filter.toLowerCase())) && <p className="search-empty">Nenhuma sessão encontrada.</p>}</div>
 
         {error && <div className="error-banner" role="alert">{error}</div>}
