@@ -104,3 +104,6 @@ O andamento e a chave da API ficam em `executions.json`, protegido com a mesma c
 ## Verificar esta revisão do login
 
 `GET /api/health` identifica o fluxo `script-web-totp-v3` e o SHA implantado. Os testes cobrem o worker real com respostas externas simuladas, incluindo usuário/senha → desafio → chave Base32 agrupada → TOTP renovado no envio → sessão conectada, consumo único do desafio e ausência de segredos no disco/estado público. Não é executado login real durante os testes.
+
+
+O diagnostico do servidor inclui o transporte privado/publico realmente usado, versoes de dependencias HTTP, presenca de proxy, classificacao da ultima rota e apenas indicadores booleanos da resposta de chave de senha. Mensagens do provedor sao classificadas em categorias fixas; URLs completas, cookies, tokens e valores de chaves nao sao exportados. Isso permite distinguir um 401 em `launcher/sync/` de uma falha no envio do codigo, sem presumir bloqueio de IP.

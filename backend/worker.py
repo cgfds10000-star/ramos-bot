@@ -10,6 +10,7 @@ import sys
 import time
 from storage import read_json, write_json
 from network import apply_instagram_proxy
+from login_diagnostics import runtime_diagnostic
 
 OUTPUT = sys.stdout
 
@@ -272,6 +273,7 @@ def _run(payload, core):
                 message += " Tipo do erro: " + symbol + "."
         if client is not None:
             diagnostic = core.safe_diagnostic(client, "autenticado" if authenticated else "recusado", error=failure)
+            diagnostic.update(runtime_diagnostic(client))
             details = ["Etapa: " + stage]
             status = diagnostic.get("http")
             if status is not None:
@@ -295,6 +297,8 @@ def _run(payload, core):
                         details.append("Requisição: " + category)
             if diagnostic.get("erro"):
                 details.append("Motivo: " + diagnostic["erro"])
+            if diagnostic.get('ultima_rota') == 'chave_criptografia_senha':
+                details.append('Falha ao obter a chave de criptografia, antes do envio da senha e do 2FA')
             message += " " + " · ".join(details) + "."
         emit("log", tone="error", message=message)
         emit("done", ok=False, authenticated=authenticated)
@@ -307,6 +311,7 @@ def _run(payload, core):
                 if diagnostic is None:
                     diagnostic = core.safe_diagnostic(
                         client, "autenticado" if authenticated else "recusado", error=failure)
+                diagnostic.update(runtime_diagnostic(client))
                 diagnostic["etapa_worker"] = stage
                 core.save_private_json(directory / "diagnostic.json", diagnostic)
             except OSError:
