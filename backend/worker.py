@@ -237,8 +237,19 @@ def _run(payload, core):
         if client is not None:
             diagnostic = core.safe_diagnostic(client, "autenticado" if authenticated else "recusado", error=failure)
             details = ["Etapa: " + stage]
-            if diagnostic.get("http") is not None:
-                details.append("HTTP " + str(diagnostic["http"]))
+            status = diagnostic.get("http")
+            if status is not None:
+                details.append("HTTP " + str(status))
+            if status == 401 and payload.get("mode") == "login" and name in {"ClientError", "ClientUnauthorizedError"}:
+                authenticated = False
+                message = ("O serviço de login não autorizou a solicitação. "
+                           "Confira os avisos de segurança no aplicativo oficial do Instagram. "
+                           "O painel não repetirá o login automaticamente.")
+                trace = diagnostic.get("etapas") or []
+                if trace and trace[-1].get("http") == status:
+                    category = core.safe_symbol(trace[-1].get("etapa"))
+                    if category:
+                        details.append("Requisição: " + category)
             if diagnostic.get("erro"):
                 details.append("Motivo: " + diagnostic["erro"])
             message += " " + " · ".join(details) + "."

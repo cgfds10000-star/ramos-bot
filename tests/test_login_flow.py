@@ -106,12 +106,12 @@ class WebTwoFactorChecks(unittest.TestCase):
         with patch('instagrapi.Client', FakeBloksInstagram):
             self.client = core.load_client_class()()
 
-    def worker_run(self, **changes):
+    def worker_run(self, *, diagnostic=None, **changes):
         output = io.StringIO()
         payload = {'username': 'teste', 'password': 'synthetic-password', 'mode': 'login', 'two_factor_method': 'auto', **changes}
         if payload.get('two_factor_method') is None:
             payload.pop('two_factor_method', None)
-        with tempfile.TemporaryDirectory() as directory, patch.object(core, 'configure_client', return_value=self.client), patch.object(core, 'load_client_class'), patch.object(core, 'save_client'), patch.object(core, 'safe_diagnostic', return_value={}), patch.object(core, 'validate_action_session') as validate, patch.object(worker, 'write_json'), patch.object(worker, 'apply_instagram_proxy'), patch.object(sys, 'stdin', io.StringIO('{"code":"003754"}\n')), patch.object(worker, 'OUTPUT', output):
+        with tempfile.TemporaryDirectory() as directory, patch.object(core, 'configure_client', return_value=self.client), patch.object(core, 'load_client_class'), patch.object(core, 'save_client'), patch.object(core, 'safe_diagnostic', return_value=diagnostic or {}), patch.object(core, 'validate_action_session') as validate, patch.object(worker, 'write_json'), patch.object(worker, 'apply_instagram_proxy'), patch.object(sys, 'stdin', io.StringIO('{"code":"003754"}\n')), patch.object(worker, 'OUTPUT', output):
             worker.run({'directory': directory, **payload})
         events = [json.loads(line) for line in output.getvalue().splitlines()]
         return events, output.getvalue(), validate
@@ -176,6 +176,21 @@ class WebTwoFactorChecks(unittest.TestCase):
         self.client.login.assert_called_once()
         self.assertEqual(diagnostic['excecao'], 'TypeError')
         self.assertIn('Etapa: login_instagram', output.getvalue())
+
+    def test_worker_reports_401_without_retrying_login_or_requesting_code(self):
+        from instagrapi.exceptions import ClientError
+
+        self.client.login = Mock(side_effect=ClientError('private synthetic detail'))
+        events, output, _ = self.worker_run(diagnostic={
+            'http': 401, 'etapas': [{'http': 401, 'etapa': 'caa_login'}],
+        })
+        self.client.login.assert_called_once()
+        self.assertFalse(any(event['type'] == 'input_required' for event in events))
+        self.assertEqual(events[-1], {'type': 'done', 'ok': False, 'authenticated': False})
+        self.assertIn('HTTP 401', output)
+        self.assertIn('caa_login', output)
+        self.assertIn('aplicativo oficial', output)
+        self.assertNotIn('private synthetic detail', output)
 
     def test_worker_reports_safe_exception_type_and_saves_safe_diagnostic(self):
         self.client.device_settings = {'app_version': 'synthetic', 'version_code': '1'}
