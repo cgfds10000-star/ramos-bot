@@ -132,6 +132,7 @@ def _run(payload, core):
     client = None
     authenticated = False
     failure = None
+    diagnostic = None
     stage = "inicializacao"
     password = payload.pop("password", "")
     try:
@@ -141,8 +142,14 @@ def _run(payload, core):
         client = core.configure_client(core.load_client_class(), directory / "new-session-unused.json", directory / "legacy-unused.json", 30)
         if session_path.is_file():
             settings = read_json(session_path)
+            if settings.get("schema") == 1:
+                raise core.FlowError("O arquivo de sessão usa um formato antigo. Conecte novamente com uma sessão nova.")
+            client.override_app_version = True
             client.set_settings(settings)
             client._local_login_username = settings.get("_local_login_username")
+            # Como no CLI, aplicar estes ajustes somente após hidratar a sessão.
+            client.read_timeout = 30
+            client.set_retry_config(session_retry_total=0, public_request_retries_count=0)
         client.challenge_code_handler = core.read_verification_code
         # Match the CLI login flow: let the Instagram response determine whether
         # the same challenge is TOTP, SMS, email, or a backup code.
@@ -227,6 +234,14 @@ def _run(payload, core):
             symbol = core.safe_symbol(name)
             if symbol:
                 message += " Tipo do erro: " + symbol + "."
+        if client is not None:
+            diagnostic = core.safe_diagnostic(client, "autenticado" if authenticated else "recusado", error=failure)
+            details = ["Etapa: " + stage]
+            if diagnostic.get("http") is not None:
+                details.append("HTTP " + str(diagnostic["http"]))
+            if diagnostic.get("erro"):
+                details.append("Motivo: " + diagnostic["erro"])
+            message += " " + " · ".join(details) + "."
         emit("log", tone="error", message=message)
         emit("done", ok=False, authenticated=authenticated)
     finally:
@@ -235,8 +250,9 @@ def _run(payload, core):
             client.password = None
             try:
                 core.save_client(client, session_path)
-                diagnostic = core.safe_diagnostic(
-                    client, "autenticado" if authenticated else "recusado", error=failure)
+                if diagnostic is None:
+                    diagnostic = core.safe_diagnostic(
+                        client, "autenticado" if authenticated else "recusado", error=failure)
                 diagnostic["etapa_worker"] = stage
                 core.save_private_json(directory / "diagnostic.json", diagnostic)
             except OSError:

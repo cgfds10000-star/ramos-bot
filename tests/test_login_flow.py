@@ -152,6 +152,31 @@ class WebTwoFactorChecks(unittest.TestCase):
         self.assertEqual(events[-1]['ok'], False)
         validate.assert_not_called()
 
+    def test_worker_reapplies_cli_retry_policy_after_loading_saved_settings(self):
+        self.client.device_settings = {'app_version': 'synthetic', 'version_code': '1'}
+        self.client.set_settings = Mock()
+        self.client.set_retry_config = Mock()
+        def check_login(*_):
+            self.client.set_settings.assert_called_once()
+            self.client.set_retry_config.assert_called_once_with(session_retry_total=0, public_request_retries_count=0)
+            self.assertTrue(self.client.override_app_version)
+            self.assertEqual(self.client.read_timeout, 30)
+            raise TypeError('synthetic failure')
+
+        self.client.login = Mock(side_effect=check_login)
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(core, 'configure_client', return_value=self.client), \
+                patch.object(core, 'save_client'), \
+                patch.object(worker, 'apply_instagram_proxy'), \
+                patch.object(worker, 'OUTPUT', output):
+            worker.write_json(Path(directory) / 'session.json', {'_local_login_username': 'teste'})
+            worker.run({'directory': directory, 'username': 'teste', 'password': 'synthetic-password', 'mode': 'login'})
+            diagnostic = worker.read_json(Path(directory) / 'diagnostic.json')
+        self.client.login.assert_called_once()
+        self.assertEqual(diagnostic['excecao'], 'TypeError')
+        self.assertIn('Etapa: login_instagram', output.getvalue())
+
     def test_worker_reports_safe_exception_type_and_saves_safe_diagnostic(self):
         self.client.device_settings = {'app_version': 'synthetic', 'version_code': '1'}
         self.client.login = Mock(side_effect=TypeError('private synthetic detail'))
@@ -169,6 +194,7 @@ class WebTwoFactorChecks(unittest.TestCase):
         error_message = next(event['message'] for event in events if event['type'] == 'log' and event['tone'] == 'error')
         diagnostic = next(value for path, value in written if Path(path).name == 'diagnostic.json')
         self.assertIn('TypeError', error_message)
+        self.assertIn('Etapa: login_instagram', error_message)
         self.assertEqual(diagnostic['excecao'], 'TypeError')
         self.assertEqual(diagnostic['etapa_worker'], 'login_instagram')
         self.assertNotIn('private synthetic detail', error_message)
