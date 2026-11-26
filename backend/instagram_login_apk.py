@@ -61,7 +61,7 @@ import unicodedata
 from urllib.parse import urlsplit
 
 CLIENT_VERSION = "3.2.19"
-REVISION = "caa-4-acoes-4-totp-local"
+REVISION = "caa-5-web-apk-2fa"
 
 
 # ---------------------------------------------------------------------------
@@ -265,8 +265,9 @@ TOTP_PICKER = "com.bloks.www.two_step_verification.method_picker"
 TOTP_SELECT = "com.bloks.www.two_step_verification.method_picker.navigation.async"
 TOTP_SCREEN = "com.bloks.www.two_factor_login.enter_totp_code"
 TOTP_VERIFY = "com.bloks.www.two_step_verification.verify_code.async"
+BACKUP_SCREEN = "com.bloks.www.two_factor_login.enter_backup_code"
 TOTP_ROUTES = {
-    "bloks/apps/" + app + "/" for app in (TOTP_ENTRY, TOTP_PICKER, TOTP_SCREEN)
+    "bloks/apps/" + app + "/" for app in (TOTP_ENTRY, TOTP_PICKER, TOTP_SCREEN, BACKUP_SCREEN)
 } | {"bloks/async_action/" + app + "/" for app in (TOTP_SELECT, TOTP_VERIFY)}
 CAA_REASONS = {
     "missing entrypoint context_data": "sem_contexto_entrada",
@@ -445,6 +446,31 @@ def _context_from_static_map(expression, context_key):
     return ""
 
 
+def _context_after_app(section, context_key):
+    following_app = re.search(r'(?<![_a-zA-Z0-9])com\.bloks\.[_a-zA-Z0-9.]+', section)
+    legacy_start = section.find("(f4i")
+    if legacy_start >= 0 and (not following_app or legacy_start < following_app.start()):
+        try:
+            # Uma lista de argumentos pode preceder o mapa. Nomes de apps
+            # dentro de um mapa ja iniciado sao valores, nao outra navegacao.
+            expression, _ = _literal_expression(section, legacy_start)
+            context = _context_from_static_map(expression, context_key)
+            if context:
+                return context
+        except (ValueError, RecursionError):
+            pass
+    boundary = min(len(section), 131072, following_app.start() if following_app else len(section))
+    bounded = section[:boundary]
+    opening = bounded.find("(")
+    if opening < 0:
+        return ""
+    try:
+        expression, _ = _literal_expression(bounded, opening)
+        return _context_from_static_map(expression, context_key)
+    except (ValueError, RecursionError):
+        return ""
+
+
 def extract_static_context(result, app_id, context_key="context_data"):
     """Aceitar aliases diferentes em mapas literais associados ao app exato."""
     candidates = set()
@@ -465,7 +491,6 @@ def extract_static_context(result, app_id, context_key="context_data"):
         elif isinstance(value, str):
             texts.append(value)
     anchor = json.dumps(app_id)
-    another_app = re.compile(r'(?<![_a-zA-Z0-9])com\.bloks\.[_a-zA-Z0-9.]+')
     for text in texts:
         start = 0
         for _ in range(24):
@@ -474,18 +499,7 @@ def extract_static_context(result, app_id, context_key="context_data"):
                 break
             position += len(anchor)
             start = position
-            next_app = another_app.search(text, position)
-            boundary = min(len(text), position + 131072,
-                           next_app.start() if next_app else len(text))
-            section = text[position:boundary]
-            opening = section.find("(")
-            if opening < 0:
-                continue
-            try:
-                expression, _ = _literal_expression(section, opening)
-            except (ValueError, RecursionError):
-                continue
-            context = _context_from_static_map(expression, context_key)
+            context = _context_after_app(text[position:], context_key)
             if context:
                 candidates.add(context)
     candidates.discard("")
@@ -780,9 +794,55 @@ def load_client_class():
                 code = generate_totp(secret)
             return super().bloks_two_step_verification_verify_code(two_step_verification_context, code, **kwargs)
 
+        def _extract_two_step_verification_context(self, data):
+            # O APK tambem le os mapas das actions e JSON encapsulado, nao so
+            # um campo no objeto externo retornado pelo CAA.
+            return authenticator_context(self, data)
+
+        def _login_with_bloks_two_factor(self, verification_code, login_json, exc):
+            context = self._extract_two_step_verification_context(login_json)
+            if not context:
+                raise FlowError("Contexto 2FA ausente. Reinicie o login.")
+            if self.authenticator_state != "nao_solicitado":
+                raise FlowError("Esta tentativa 2FA ja foi consumida. Nenhum codigo foi repetido.")
+            challenge = self._infer_bloks_two_factor_challenge(login_json, verification_code)
+            self.authenticator_in_progress = True
+            self.authenticator_branch = "bloks_" + challenge
+            self.authenticator_state = "preparando"
+            try:
+                steps = [
+                    lambda: self.bloks_two_step_verification_entrypoint(context),
+                    lambda: self.bloks_two_step_verification_method_picker(context),
+                    lambda: self.bloks_two_step_verification_select_method(context, selected_method=challenge),
+                ]
+                if challenge == "backup_codes":
+                    steps.append(lambda: self.bloks_two_step_verification_enter_backup_code(context))
+                for step in steps:
+                    result = step()
+                    if self.bloks_apply_login_response(result) and self.user_id and (self.authorization or self.sessionid):
+                        self.authenticator_state = "autenticado"
+                        return True
+                    # Cada tela pode substituir o contexto. O codigo precisa
+                    # continuar o ultimo contexto, como no APK fornecido.
+                    context = authenticator_context(self, result) or context
+                code = self._normalize_backup_code(verification_code) if challenge == "backup_codes" else verification_code
+                self.authenticator_state = "codigo_enviado"
+                result = self.bloks_two_step_verification_verify_code(context, code, challenge=challenge)
+                if not self.bloks_apply_login_response(result) or not self.user_id or not (self.authorization or self.sessionid):
+                    self.authenticator_state = "sem_sessao_apos_codigo"
+                    raise FlowError("A resposta do 2FA nao confirmou uma sessao autenticada. O codigo nao foi repetido.")
+                self.authenticator_state = "autenticado"
+                return True
+            finally:
+                self.authenticator_in_progress = False
+                self._local_totp_secret = None
+
         def bloks_caa_resolve_two_step_verification(self, send_result, verification_code="", domain=None):
-            if self.two_factor_method == "autenticador" and (
-                    authenticator_context(self, send_result) or native_authenticator_info(send_result)):
+            context = authenticator_context(self, send_result)
+            native = None if context else native_authenticator_info(send_result)
+            if (self.two_factor_method == "autenticador" and context) or (
+                    native and (self.two_factor_method == "autenticador" or
+                                not self.bloks_extract_context_data(send_result, PROFILE_ENTRY))):
                 result = authenticator_login(self, send_result)
                 self.profile_session_completed = True
                 return {"logged_in": True, "reason": "", "result": result}
@@ -802,6 +862,13 @@ def load_client_class():
 
         def bloks_caa_login(self, *args, **kwargs):
             outcome = super().bloks_caa_login(*args, **kwargs)
+            self.caa_last_outcome = outcome
+            if (not outcome.get("logged_in") and not self.profile_session_completed
+                    and not authenticator_context(self, outcome) and native_authenticator_info(outcome)):
+                # A biblioteca so levanta TwoFactorRequired para Bloks. Um
+                # identificador nativo tambem e uma continuacao valida em auto.
+                authenticator_login(self, outcome)
+                self.profile_session_completed = True
             # A entrada de verificacao tambem pode devolver a sessao diretamente,
             # sem passar pela tela de codigo que a biblioteca espera.
             if self.profile_session_completed and self.user_id and (self.authorization or self.sessionid):
@@ -825,6 +892,14 @@ def load_client_class():
                     self.profile_session_completed = True
                     if self.device_approval_state:
                         self.device_approval_state = "sessao_recebida"
+                    return result
+                if authenticator_context(self, result) or native_authenticator_info(result):
+                    # AP pode encaminhar a mesma tentativa para TOTP/nativo.
+                    # O resolver original esperava apenas outra tela AP.
+                    self.last_json = result
+                    from instagrapi.exceptions import TwoFactorRequired
+                    continue_two_factor(self, TwoFactorRequired("Verification required"))
+                    self.profile_session_completed = True
                     return result
                 if self.bloks_extract_context_data(result, PROFILE_CODE):
                     if self.device_approval_state:
@@ -1044,24 +1119,27 @@ def safe_diagnostic(client, outcome, error=None):
 
 
 def continue_two_factor(client, error):
-    if getattr(client, "two_factor_method", "auto") == "autenticador":
-        if getattr(client, "authenticator_state", "nao_solicitado") != "nao_solicitado":
-            raise FlowError("A tentativa do autenticador foi interrompida pelo servidor. Nenhum codigo ou etapa foi repetido.")
-        data = {"resposta": client.last_json, "resultado_caa": client.caa_last_outcome}
-        context = getattr(error, "two_step_verification_context", "")
-        if isinstance(context, str) and context:
-            data["two_step_verification_context"] = context
-        info = getattr(error, "two_factor_info", None)
-        if isinstance(info, dict):
-            data["two_factor_info"] = info
+    if getattr(client, "authenticator_state", "nao_solicitado") != "nao_solicitado":
+        raise FlowError("A tentativa 2FA foi interrompida pelo servidor. Nenhum codigo ou etapa foi repetido.")
+    data = dict(client.last_json) if isinstance(client.last_json, dict) else {}
+    context = getattr(error, "two_step_verification_context", "")
+    if isinstance(context, str) and context:
+        data["two_step_verification_context"] = context
+    info = getattr(error, "two_factor_info", None)
+    if isinstance(info, dict):
+        data["two_factor_info"] = info
+    # Usar primeiro a resposta atual. O resultado inicial do CAA pode guardar
+    # um contexto antigo, substituido nas telas intermediarias.
+    context = authenticator_context(client, data)
+    native = None if context else native_authenticator_info(data)
+    if not context and not native:
+        data = client.caa_last_outcome
+        context = authenticator_context(client, data)
+        native = None if context else native_authenticator_info(data)
+    if getattr(client, "two_factor_method", "auto") == "autenticador" or native:
         authenticator_login(client, data)
         return bool(client.user_id and (client.authorization or client.sessionid))
     # Continuar o contexto recebido, sem repetir o envio de usuario e senha.
-    context = getattr(error, "two_step_verification_context", "")
-    data = dict(client.last_json) if isinstance(client.last_json, dict) else {}
-    if context:
-        data["two_step_verification_context"] = context
-    context = client._extract_two_step_verification_context(data)
     if not context:
         raise FlowError("O servidor pediu dois fatores, mas nao devolveu um contexto utilizavel. Conclua no aplicativo.")
     data["two_step_verification_context"] = context

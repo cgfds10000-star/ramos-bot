@@ -138,8 +138,7 @@ class WebTwoFactorChecks(unittest.TestCase):
     def test_code_typed_in_login_is_consumed_once_by_the_script_prompt(self):
         for code, method in [('003754', 'totp'), ('00123456', 'backup_codes')]:
             with self.subTest(method=method):
-                self.client.authorization_data = {}
-                self.client.bloks_two_step_verification_verify_code.reset_mock()
+                self.setUp()
                 events, output, _ = self.worker_run(verification_code=code)
                 self.assertEqual(events[-1], {'type': 'done', 'ok': True, 'authenticated': True})
                 self.assertFalse(any(event['type'] == 'input_required' for event in events))
@@ -238,7 +237,7 @@ class WebTwoFactorChecks(unittest.TestCase):
     def test_generic_script_getpass_is_bridged_for_totp_sms_and_backup_codes(self):
         for code, sms, method in [('003754', False, 'totp'), ('003754', True, 'sms'), ('00123456', False, 'backup_codes')]:
             with self.subTest(method=method):
-                self.client.authorization_data = {}
+                self.setUp()
                 self.client.last_json = {**self.client.outcome, 'sms_two_factor_on': sms, 'totp_two_factor_on': not sms}
                 self.client.bloks_two_step_verification_verify_code.reset_mock()
                 output = io.StringIO()
