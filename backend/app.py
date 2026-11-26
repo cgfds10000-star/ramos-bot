@@ -531,6 +531,9 @@ class RamosService:
                                  "message_category": {"useragent_mismatch", "login_required", "invalid_signature", "unauthorized", "please_wait", "other"}}.items():
                 value = report.get(key)
                 checks[key] = value if isinstance(value, str) and value in allowed else None
+            allowed_terms = set('bad request user agent useragent mismatch version signature invalid app application id authorization token access denied missing unsupported required login authenticate authentication unauthorized challenge csrf update outdated device header headers url endpoint platform not allowed authenticated status fail wrong incorrect'.split())
+            terms = report.get('message_terms', [])
+            checks['message_terms'] = [term for term in terms if isinstance(term, str) and term in allowed_terms] if isinstance(terms, list) else []
             self.instagram_key_check = {"status": "completed", **checks}
         except (OSError, ValueError, subprocess.TimeoutExpired):
             self.instagram_key_check = {"status": "unavailable"}

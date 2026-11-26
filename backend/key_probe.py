@@ -1,5 +1,6 @@
 """Uma leitura de configuração pública; não recebe contas, senhas ou sessões."""
 import json
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -7,6 +8,7 @@ import tempfile
 import instagram_login_apk as core
 from network import apply_instagram_proxy
 
+MESSAGE_TERMS = frozenset('bad request user agent useragent mismatch version signature invalid app application id authorization token access denied missing unsupported required login authenticate authentication unauthorized challenge csrf update outdated device header headers url endpoint platform not allowed authenticated status fail wrong incorrect'.split())
 
 def probe(proxy=""):
     with tempfile.TemporaryDirectory() as directory:
@@ -23,8 +25,17 @@ def probe(proxy=""):
             }) is not None
         except Exception as failure:
             error = core.safe_symbol(type(failure).__name__)
-        return {"available": available, "exception": error,
-                **core.password_key_summary(getattr(client, "last_response", None))}
+        response = getattr(client, "last_response", None)
+        terms = []
+        try:
+            data = response.json() if response is not None and len(response.content) <= 16384 else {}
+            message = data.get('message') if isinstance(data, dict) else None
+            if isinstance(message, str):
+                terms = sorted(set(re.findall(r'[a-z]+', message.casefold())) & MESSAGE_TERMS)
+        except (ValueError, AttributeError, TypeError):
+            pass
+        return {"available": available, "exception": error, "message_terms": terms,
+                **core.password_key_summary(response)}
 
 
 if __name__ == "__main__":
