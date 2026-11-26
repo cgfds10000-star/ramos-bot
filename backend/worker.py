@@ -149,7 +149,8 @@ def _run(payload, core):
             client._local_login_username = settings.get("_local_login_username")
             # Como no CLI, aplicar estes ajustes somente após hidratar a sessão.
             client.read_timeout = 30
-            client.set_retry_config(session_retry_total=0, public_request_retries_count=0)
+            client.set_retry_config(session_retry_total=0, public_request_retries_count=0,
+                                    private_transport=core.PRIVATE_TRANSPORT)
         client.challenge_code_handler = core.read_verification_code
         # Match the CLI login flow: let the Instagram response determine whether
         # the same challenge is TOTP, SMS, email, or a backup code.

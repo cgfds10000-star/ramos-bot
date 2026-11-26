@@ -46,7 +46,7 @@ function App() {
   const [macroName, setMacroName] = useState('');
   const [macroText, setMacroText] = useState('');
   const [newAccount, setNewAccount] = useState('');
-  const [twoFactor, setTwoFactor] = useState('autenticador');
+  const [twoFactor, setTwoFactor] = useState('auto');
   const [continuousExecution, setContinuousExecution] = useState(true);
   const poll = useRef(false);
   const visibleChallenge = useRef('');

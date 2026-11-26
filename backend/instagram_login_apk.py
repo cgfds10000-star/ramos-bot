@@ -40,6 +40,7 @@ Testes de regressao usam sessoes sinteticas e respostas simuladas.
 """
 from __future__ import annotations
 import argparse
+import base64
 import getpass
 from importlib.metadata import version, PackageNotFoundError
 import json
@@ -56,7 +57,8 @@ import unicodedata
 from urllib.parse import urlsplit
 
 CLIENT_VERSION = "3.2.19"
-REVISION = "caa-4-acoes-4-totp"
+REVISION = "caa-5-cli-transport-password-key"
+PRIVATE_TRANSPORT = "curl"
 
 
 # ---------------------------------------------------------------------------
@@ -716,7 +718,18 @@ def load_client_class():
             self.authenticator_in_progress = False
             self.authenticator_state = "nao_solicitado"
             self.authenticator_branch = None
+            self.caa_password_key = None
+            self.password_key_source = None
             super().__init__(*args, **kwargs)
+
+        def password_publickeys(self):
+            # A preparação CAA pode entregar a chave da mesma tentativa.
+            # Nesse caso não abrir launcher/sync apenas para pedi-la de novo.
+            if self.caa_password_key is not None:
+                self.password_key_source = "caa_headers"
+                return self.caa_password_key
+            self.password_key_source = "launcher_sync"
+            return super().password_publickeys()
 
         def private_request(self, endpoint, *args, **kwargs):
             # A dependencia repete timeouts mesmo com retry_total=0. Nao repetir
@@ -750,6 +763,9 @@ def load_client_class():
             return value
 
         def bloks_caa_login(self, *args, **kwargs):
+            # Chaves são transitórias e nunca atravessam tentativas de login.
+            self.caa_password_key = None
+            self.password_key_source = None
             outcome = super().bloks_caa_login(*args, **kwargs)
             # A entrada de verificacao tambem pode devolver a sessao diretamente,
             # sem passar pela tela de codigo que a biblioteca espera.
@@ -819,6 +835,10 @@ def load_client_class():
                 return super()._send_private_request(endpoint, *args, **kwargs)
             finally:
                 response = getattr(self, "last_response", None)
+                if category == "caa_preparacao":
+                    key = password_key_from_response(response)
+                    if key is not None:
+                        self.caa_password_key = key
                 data = getattr(self, "last_json", None)
                 error = safe_symbol(data.get("error_type")) if isinstance(data, dict) else None
                 status = getattr(response, "status_code", None)
@@ -843,6 +863,27 @@ def load_client_class():
             return code
 
     return LoginClient
+
+
+def password_key_from_response(response):
+    """Aceitar somente o par de chave pública emitido numa resposta CAA válida."""
+    status = getattr(response, "status_code", None)
+    if not isinstance(status, int) or not 200 <= status < 300:
+        return None
+    headers = getattr(response, "headers", {})
+    key_id = headers.get("ig-set-password-encryption-key-id", "")
+    public_key = headers.get("ig-set-password-encryption-pub-key", "")
+    if (not isinstance(key_id, str) or not re.fullmatch(r"[0-9]{1,3}", key_id)
+            or int(key_id) > 255 or not isinstance(public_key, str) or len(public_key) > 8192):
+        return None
+    try:
+        from Cryptodome.PublicKey import RSA
+        key = RSA.import_key(base64.b64decode(public_key, validate=True))
+        if key.has_private() or key.size_in_bits() < 2048:
+            return None
+    except (ValueError, IndexError, TypeError):
+        return None
+    return int(key_id), public_key
 
 
 def endpoint_category(endpoint):
@@ -942,7 +983,8 @@ def configure_client(client_class, session_path, legacy_path, timeout):
         client.set_timezone_offset(-10800, timezone_name="America/Sao_Paulo")
     client.read_timeout = timeout
     # Nao repetir automaticamente falhas HTTP de autenticacao ou restricoes.
-    client.set_retry_config(session_retry_total=0, public_request_retries_count=0)
+    client.set_retry_config(session_retry_total=0, public_request_retries_count=0,
+                            private_transport=PRIVATE_TRANSPORT)
     client.challenge_code_handler = read_verification_code
     return client
 
@@ -988,6 +1030,8 @@ def safe_diagnostic(client, outcome, error=None):
         "metodo_2fa": getattr(client, "two_factor_method", "auto"),
         "ramo_autenticador": getattr(client, "authenticator_branch", None),
         "estado_autenticador": getattr(client, "authenticator_state", "nao_solicitado"),
+        "transporte_privado": safe_symbol(getattr(client, "private_transport", None)),
+        "origem_chave_senha": getattr(client, "password_key_source", None),
         "etapas": trace[-100:],
     }
 

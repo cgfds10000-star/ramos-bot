@@ -158,7 +158,8 @@ class WebTwoFactorChecks(unittest.TestCase):
         self.client.set_retry_config = Mock()
         def check_login(*_):
             self.client.set_settings.assert_called_once()
-            self.client.set_retry_config.assert_called_once_with(session_retry_total=0, public_request_retries_count=0)
+            self.client.set_retry_config.assert_called_once_with(session_retry_total=0, public_request_retries_count=0,
+                                                                 private_transport='curl')
             self.assertTrue(self.client.override_app_version)
             self.assertEqual(self.client.read_timeout, 30)
             raise TypeError('synthetic failure')

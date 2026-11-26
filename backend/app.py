@@ -258,8 +258,11 @@ class RamosService:
             raise RuntimeError("Formato de dados do Ramos Bot não reconhecido.")
         for session in self.data["sessions"]:
             session.update(status="disconnected", authenticated=False, challenge=None)
-        # A escolha feita no painel precisa sobreviver ao reinicio do servidor.
+        # Migrar o padrão antigo forçado para a continuação validada no CLI.
         settings = self.data.setdefault("settings", {})
+        if self.data.get("login_flow_revision") != "cli-auto-v2":
+            settings["two_factor_method"] = "auto"
+            self.data["login_flow_revision"] = "cli-auto-v2"
         if settings.get("two_factor_method") not in ("auto", "autenticador"):
             settings["two_factor_method"] = "auto"
         self.data['settings']['execution_mode'] = 'server'
