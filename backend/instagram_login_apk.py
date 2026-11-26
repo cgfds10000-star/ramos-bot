@@ -40,7 +40,6 @@ Testes de regressao usam sessoes sinteticas e respostas simuladas.
 """
 from __future__ import annotations
 import argparse
-import base64
 import getpass
 from importlib.metadata import version, PackageNotFoundError
 import json
@@ -57,8 +56,7 @@ import unicodedata
 from urllib.parse import urlsplit
 
 CLIENT_VERSION = "3.2.19"
-REVISION = "caa-8-key-cooldown"
-PRIVATE_TRANSPORT = "curl"
+REVISION = "caa-4-acoes-4-totp"
 
 
 # ---------------------------------------------------------------------------
@@ -718,31 +716,7 @@ def load_client_class():
             self.authenticator_in_progress = False
             self.authenticator_state = "nao_solicitado"
             self.authenticator_branch = None
-            self.caa_password_key = None
-            self.password_key_source = None
             super().__init__(*args, **kwargs)
-
-        def password_publickeys(self):
-            # A preparação CAA pode entregar a chave da mesma tentativa.
-            # Nesse caso não abrir launcher/sync apenas para pedi-la de novo.
-            if self.caa_password_key is not None:
-                self.password_key_source = "caa_headers"
-                return self.caa_password_key
-            self.password_key_source = "launcher_sync"
-            # O núcleo validado lê os headers antes de julgar o corpo HTTP.
-            # Um 4xx de configuração pode conter a chave pública necessária.
-            from instagrapi.exceptions import ClientError, PleaseWaitFewMinutes
-            try:
-                result = super().password_publickeys()
-            except ClientError as error:
-                if password_key_summary(self.last_response)["message_category"] == "please_wait":
-                    raise PleaseWaitFewMinutes("Instagram pediu uma pausa na preparacao do login.",
-                                               response=self.last_response) from error
-                raise
-            if password_key_summary(self.last_response)["message_category"] == "please_wait":
-                raise PleaseWaitFewMinutes("Instagram pediu uma pausa na preparacao do login.",
-                                           response=self.last_response)
-            return result
 
         def private_request(self, endpoint, *args, **kwargs):
             # A dependencia repete timeouts mesmo com retry_total=0. Nao repetir
@@ -776,9 +750,6 @@ def load_client_class():
             return value
 
         def bloks_caa_login(self, *args, **kwargs):
-            # Chaves são transitórias e nunca atravessam tentativas de login.
-            self.caa_password_key = None
-            self.password_key_source = None
             outcome = super().bloks_caa_login(*args, **kwargs)
             # A entrada de verificacao tambem pode devolver a sessao diretamente,
             # sem passar pela tela de codigo que a biblioteca espera.
@@ -848,10 +819,6 @@ def load_client_class():
                 return super()._send_private_request(endpoint, *args, **kwargs)
             finally:
                 response = getattr(self, "last_response", None)
-                if category == "caa_preparacao":
-                    key = password_key_from_response(response)
-                    if key is not None:
-                        self.caa_password_key = key
                 data = getattr(self, "last_json", None)
                 error = safe_symbol(data.get("error_type")) if isinstance(data, dict) else None
                 status = getattr(response, "status_code", None)
@@ -861,13 +828,6 @@ def load_client_class():
                     "erro": error,
                     "segundos": round(time.monotonic() - started, 2),
                 }
-                # Somente nomes públicos fixos; nunca URL, query ou credenciais.
-                domain = kwargs.get("domain") or "i.instagram.com"
-                if domain in {"i.instagram.com", "b.i.instagram.com"}:
-                    entry["dominio"] = domain
-                if category == "chave_criptografia_senha":
-                    entry["resposta_chave"] = password_key_summary(response)
-                    entry["erro"] = entry["erro"] or entry["resposta_chave"]["error_type"]
                 if category in {"caa_login", "verificacao_entrada", "verificacao_tela_codigo", "verificacao_envio_codigo"}:
                     try:
                         entry["estrutura_bloks"] = bloks_shape_summary(self, data)
@@ -885,63 +845,8 @@ def load_client_class():
     return LoginClient
 
 
-def password_key_from_response(response):
-    """Aceitar somente o par de chave pública emitido numa resposta CAA válida."""
-    status = getattr(response, "status_code", None)
-    if not isinstance(status, int) or not 200 <= status < 300:
-        return None
-    return password_key_from_headers(getattr(response, "headers", {}))
-
-
-def password_key_from_headers(headers):
-    key_id = headers.get("ig-set-password-encryption-key-id", "")
-    public_key = headers.get("ig-set-password-encryption-pub-key", "")
-    if (not isinstance(key_id, str) or not re.fullmatch(r"[0-9]{1,3}", key_id)
-            or int(key_id) > 255 or not isinstance(public_key, str) or len(public_key) > 8192):
-        return None
-    try:
-        from Cryptodome.PublicKey import RSA
-        key = RSA.import_key(base64.b64decode(public_key, validate=True))
-        if key.has_private() or key.size_in_bits() < 2048:
-            return None
-    except (ValueError, IndexError, TypeError):
-        return None
-    return int(key_id), public_key
-
-
-def password_key_summary(response):
-    """Metadados limitados; nenhuma chave, corpo, cookie ou autorização é exposta."""
-    headers = getattr(response, "headers", {})
-    data = {}
-    content_type = str(headers.get("content-type", "")).lower()
-    body_kind = "json" if "json" in content_type else "html" if "html" in content_type else "other"
-    try:
-        if len(getattr(response, "content", b"")) <= 16384:
-            parsed = response.json()
-            if isinstance(parsed, dict):
-                data = parsed
-    except (ValueError, AttributeError, TypeError):
-        pass
-    categories = {"useragent mismatch": "useragent_mismatch", "login_required": "login_required",
-                  "invalid signature": "invalid_signature", "unauthorized": "unauthorized",
-                  "not authorized": "unauthorized", "please wait a few minutes": "please_wait"}
-    message = data.get("message")
-    category = categories.get(message.strip().casefold(), "other") if isinstance(message, str) else None
-    if isinstance(message, str) and message.strip().casefold().startswith(("please wait a few minutes", "aguarde alguns minutos")):
-        category = "please_wait"
-    status = getattr(response, "status_code", None)
-    return {"http": status if isinstance(status, int) else None,
-            "key_id_header": bool(headers.get("ig-set-password-encryption-key-id")),
-            "public_key_header": bool(headers.get("ig-set-password-encryption-pub-key")),
-            "valid_key_headers": password_key_from_headers(headers) is not None,
-            "body_kind": body_kind, "error_type": safe_symbol(data.get("error_type")),
-            "message_category": category}
-
-
 def endpoint_category(endpoint):
     endpoint = str(endpoint)
-    if endpoint == "launcher/sync/":
-        return "chave_criptografia_senha"
     if TOTP_VERIFY in endpoint or endpoint == "accounts/two_factor_login/":
         return "verificacao_autenticador_envio"
     if TOTP_SCREEN in endpoint:
@@ -1037,8 +942,7 @@ def configure_client(client_class, session_path, legacy_path, timeout):
         client.set_timezone_offset(-10800, timezone_name="America/Sao_Paulo")
     client.read_timeout = timeout
     # Nao repetir automaticamente falhas HTTP de autenticacao ou restricoes.
-    client.set_retry_config(session_retry_total=0, public_request_retries_count=0,
-                            private_transport=PRIVATE_TRANSPORT)
+    client.set_retry_config(session_retry_total=0, public_request_retries_count=0)
     client.challenge_code_handler = read_verification_code
     return client
 
@@ -1084,9 +988,6 @@ def safe_diagnostic(client, outcome, error=None):
         "metodo_2fa": getattr(client, "two_factor_method", "auto"),
         "ramo_autenticador": getattr(client, "authenticator_branch", None),
         "estado_autenticador": getattr(client, "authenticator_state", "nao_solicitado"),
-        "transporte_privado": safe_symbol(getattr(client, "private_transport", None)),
-        "origem_chave_senha": getattr(client, "password_key_source", None),
-        "proxy_configurado": bool(getattr(client, "_ramos_proxy_enabled", False)),
         "etapas": trace[-100:],
     }
 

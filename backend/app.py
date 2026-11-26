@@ -230,7 +230,6 @@ class RamosService:
         self.worker_command = worker_command or [sys.executable, "-u", str(ROOT / "backend" / "worker.py")]
         self.dependency_check = dependency_check or (lambda: importlib.util.find_spec("instagrapi") is not None)
         self.jobs = {}
-        self.instagram_key_check = {"status": "not_run"}
         self.viralize_api = viralize_api
         self.proxy_checker = proxy_checker
         self.proxy_check_running = False
@@ -458,11 +457,18 @@ class RamosService:
             if not self.dependency_check():
                 raise ApiError("O módulo de Instagram ainda não está instalado no servidor. Execute a instalação indicada no LEIA-ME.", 503)
             mode = payload.get("mode")
+            verification_code = ""
             if mode == "login":
                 account = self.add_account(payload.get("username"))
                 password = payload.get("password", "")
                 if not isinstance(password, str) or len(password) > 1000:
                     raise ApiError("Senha inválida.")
+                raw_code = payload.get("verification_code", "")
+                if not isinstance(raw_code, str):
+                    raise ApiError("Informe um código 2FA numérico de 6 ou 8 dígitos.")
+                verification_code = re.sub(r"\s+", "", raw_code)
+                if verification_code and not re.fullmatch(r"(?:[0-9]{6}|[0-9]{8})", verification_code):
+                    raise ApiError("Informe um código 2FA numérico de 6 ou 8 dígitos.")
                 session_path = self.directory / "accounts" / account["id"] / "session.json"
                 if not password and not session_path.is_file():
                     raise ApiError("Informe a senha para conectar esta conta pela primeira vez.")
@@ -483,12 +489,14 @@ class RamosService:
             session.update(account_id=account["id"], status="connecting" if mode == "login" else "running", challenge=None)
             if mode == "login":
                 session["authenticated"] = False
-            job = {"id": str(uuid.uuid4()), "account_id": account["id"], "process": None, "hidden": [password], "cancelled": False,
+            job = {"id": str(uuid.uuid4()), "account_id": account["id"], "process": None, "hidden": [password, verification_code], "cancelled": False,
                    "finished": threading.Event(), "result": None, "success": False}
             self.jobs[session_id] = job
             worker_payload = {"mode": mode, "username": account["username"], "password": password, "steps": steps,
                               "directory": str(self.directory / "accounts" / account["id"]), "proxy": self.data.get("proxy", ""),
                               "two_factor_method": self.data["settings"]["two_factor_method"]}
+            if verification_code:
+                worker_payload["verification_code"] = verification_code
             try:
                 process = subprocess.Popen(self.worker_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                            text=True, encoding="utf-8", bufsize=1, cwd=ROOT / "backend",
@@ -503,43 +511,12 @@ class RamosService:
                 session.update(previous)
                 raise ApiError("Não foi possível iniciar o módulo de Instagram.", 503) from None
             worker_payload["password"] = ""
+            worker_payload.pop("verification_code", None)
             self.save()
             self.log(session_id, "info", "Inicializando módulo..." if mode == "login" else "Executando " + ("macro" if mode == "macro" else steps[0]["command"]) + "...")
             monitor = threading.Thread(target=self.monitor, args=(session_id, job), daemon=True)
             monitor.start()
             return {"ok": True, "job_id": job["id"]}
-
-    def check_instagram_key(self):
-        """Uma verificação no início do servidor, sem tentar autenticar contas."""
-        self.instagram_key_check = {"status": "checking"}
-        with self.lock:
-            proxy = self.data.get("proxy", "")
-        try:
-            result = subprocess.run([sys.executable, str(ROOT / "backend" / "key_probe.py")],
-                                    input=json.dumps({"proxy": proxy}), capture_output=True,
-                                    text=True, encoding="utf-8", timeout=25)
-            report = json.loads(result.stdout) if result.returncode == 0 else {}
-            if result.returncode or not isinstance(report, dict) or "available" not in report:
-                raise ValueError("Configuração indisponível.")
-            # A saúde pública expõe apenas o formato fixo de uma chamada sem conta.
-            checks = {}
-            for key in ("available", "key_id_header", "public_key_header", "valid_key_headers"):
-                checks[key] = report.get(key) is True
-            status = report.get("http")
-            checks["http"] = status if type(status) is int and 100 <= status <= 599 else None
-            for key, allowed in {"body_kind": {"json", "html", "other"},
-                                 "message_category": {"useragent_mismatch", "login_required", "invalid_signature", "unauthorized", "please_wait", "other"}}.items():
-                value = report.get(key)
-                checks[key] = value if isinstance(value, str) and value in allowed else None
-            allowed_terms = set('bad request user agent useragent mismatch version signature invalid app application id authorization token access denied missing unsupported required login authenticate authentication unauthorized challenge csrf update outdated device header headers url endpoint platform not allowed authenticated status fail wrong incorrect'.split())
-            terms = report.get('message_terms', [])
-            checks['message_terms'] = [term for term in terms if isinstance(term, str) and term in allowed_terms] if isinstance(terms, list) else []
-            message = report.get('anonymous_message')
-            if not proxy and isinstance(message, str) and re.fullmatch(r"[\w\s.,!?;:'()\-]{0,240}", message):
-                checks['anonymous_message'] = message
-            self.instagram_key_check = {"status": "completed", **checks}
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            self.instagram_key_check = {"status": "unavailable"}
 
     def monitor(self, session_id, job):
         process = job["process"]
@@ -1144,8 +1121,7 @@ class RamosHandler(BaseHTTPRequestHandler):
         try:
             if urlsplit(self.path).path == "/api/health":
                 return self.reply(200, {"ok": True, "login_flow": "script-web-2fa-v2",
-                                        "revision": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "local"),
-                                        "instagram_key_check": self.server.service.instagram_key_check})
+                                        "revision": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "local")})
             path = urlsplit(self.path).path
             if path.startswith("/api/") or not os.environ.get("RAMOS_ADMIN_PASSWORD"):
                 self.access()
@@ -1247,8 +1223,6 @@ def main():
             print(json.dumps({'event': 'ramos_proxy_check', **result['check']}, ensure_ascii=False), flush=True)
         threading.Thread(target=check_initial_proxy, daemon=True).start()
     server = make_server(service, args.port)
-    if os.environ.get("RAMOS_KEY_PROBE_ON_START") == "1":
-        threading.Thread(target=service.check_instagram_key, daemon=True).start()
     service.resume_runs()
     print(json.dumps({'event': 'ramos_executor_ready', 'mode': 'server',
                       'continuous_default': service.data['settings']['continuous_execution'],

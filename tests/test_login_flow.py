@@ -135,6 +135,25 @@ class WebTwoFactorChecks(unittest.TestCase):
         self.assertEqual(events[-1]['ok'], True)
         self.assertEqual(self.client.two_factor_method, 'auto')
 
+    def test_code_typed_in_login_is_consumed_once_by_the_script_prompt(self):
+        for code, method in [('003754', 'totp'), ('00123456', 'backup_codes')]:
+            with self.subTest(method=method):
+                self.client.authorization_data = {}
+                self.client.bloks_two_step_verification_verify_code.reset_mock()
+                events, output, _ = self.worker_run(verification_code=code)
+                self.assertEqual(events[-1], {'type': 'done', 'ok': True, 'authenticated': True})
+                self.assertFalse(any(event['type'] == 'input_required' for event in events))
+                self.client.bloks_two_step_verification_verify_code.assert_called_once_with('synthetic-context', code, challenge=method)
+                self.assertNotIn(code, output)
+
+    def test_rejected_pretyped_code_is_not_reused_or_reported_as_connected(self):
+        self.client.accept_code = False
+        events, output, _ = self.worker_run(verification_code='003754')
+        self.assertEqual(events[-1], {'type': 'done', 'ok': False, 'authenticated': False})
+        self.client.bloks_two_step_verification_verify_code.assert_called_once()
+        self.assertFalse(any(event['type'] == 'input_required' for event in events))
+        self.assertNotIn('003754', output)
+
     def test_rejected_code_is_not_resent_and_never_connects_the_session(self):
         self.client.accept_code = False
         events, output, validate = self.worker_run()
@@ -158,8 +177,7 @@ class WebTwoFactorChecks(unittest.TestCase):
         self.client.set_retry_config = Mock()
         def check_login(*_):
             self.client.set_settings.assert_called_once()
-            self.client.set_retry_config.assert_called_once_with(session_retry_total=0, public_request_retries_count=0,
-                                                                 private_transport='curl')
+            self.client.set_retry_config.assert_called_once_with(session_retry_total=0, public_request_retries_count=0)
             self.assertTrue(self.client.override_app_version)
             self.assertEqual(self.client.read_timeout, 30)
             raise TypeError('synthetic failure')
@@ -337,6 +355,32 @@ with ExitStack() as stack:
 
 
 class WorkerProtocolChecks(unittest.TestCase):
+    def test_typed_code_reaches_real_worker_without_terminal_input_or_secret_in_logs(self):
+        from app import RamosService, ApiError
+        import time
+        with tempfile.TemporaryDirectory() as directory:
+            service = RamosService(directory, worker_command=[sys.executable, '-u', '-c', WORKER_HARNESS], dependency_check=lambda: True)
+            try:
+                sid = service.data['sessions'][0]['id']
+                service.start(sid, {'mode': 'login', 'username': 'teste', 'password': 'synthetic-password', 'verification_code': '003754'})
+                deadline = time.monotonic() + 8
+                while sid in service.jobs and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertNotIn(sid, service.jobs)
+                self.assertTrue(service.session(sid)['authenticated'])
+                self.assertIsNone(service.session(sid)['challenge'])
+                public = json.dumps(service.snapshot())
+                self.assertNotIn('003754', public)
+                self.assertNotIn('synthetic-password', public)
+                for path in Path(directory).rglob('*.json'):
+                    self.assertNotIn('003754', path.read_text())
+                for invalid in ('1234567', 'secret', 123456):
+                    with self.assertRaises(ApiError):
+                        service.start(sid, {'mode': 'login', 'username': 'teste', 'password': 'synthetic-password', 'verification_code': invalid})
+                self.assertNotIn(sid, service.jobs)
+            finally:
+                service.close()
+
     def test_real_worker_waits_for_user_input_and_never_repeats_password_or_code(self):
         from app import RamosService, ApiError
         import time

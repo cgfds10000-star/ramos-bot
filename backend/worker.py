@@ -86,27 +86,39 @@ ERRORS = {
 class _WebGetpass:
     """O núcleo importa getpass; aqui ele nunca lê o terminal."""
 
-    @staticmethod
-    def getpass(prompt="", *_args, **_kwargs):
+    def __init__(self, initial_code=""):
+        self.initial_code = initial_code
+
+    def read(self, kind, message):
+        if self.initial_code:
+            code, self.initial_code = self.initial_code, ""
+            pattern = r"[0-9]{6}" if kind == "authenticator" else r"(?:[0-9]{6}|[0-9]{8})"
+            if not re.fullmatch(pattern, code):
+                raise ValueError("Código 2FA inválido para o método solicitado.")
+            return code
+        return ask_code(kind, message)
+
+    def getpass(self, prompt="", *_args, **_kwargs):
         low = str(prompt).strip().lower()
         if "app de autentica" in low:
-            return ask_code("authenticator", "Digite os 6 dígitos do aplicativo autenticador e toque em Confirmar.")
+            return self.read("authenticator", "Digite os 6 dígitos do aplicativo autenticador e toque em Confirmar.")
         if "autenticador" in low:
-            return ask_code("two_factor", "Digite os 6 dígitos do autenticador, o código por SMS/e-mail ou um código de backup.")
-        return ask_code("code", "Digite o código que o Instagram enviou por SMS ou e-mail.")
+            return self.read("two_factor", "Digite os 6 dígitos do autenticador, o código por SMS/e-mail ou um código de backup.")
+        return self.read("code", "Digite o código que o Instagram enviou por SMS ou e-mail.")
 
 
 @contextlib.contextmanager
-def web_input(core):
+def web_input(core, initial_code=""):
     """Adaptar somente entrada/saída; o núcleo usa a mesma lógica do script CLI."""
+    reader = _WebGetpass(initial_code)
     overrides = {
         "CONSOLE": EventConsole(),
         "read_json": read_json,
         "save_private_json": write_json,
         # Substituir o nome no módulo do núcleo: não existe fallback para o terminal.
-        "getpass": _WebGetpass,
-        "read_authenticator_code": lambda: ask_code("authenticator", "Digite os 6 dígitos do aplicativo autenticador e toque em Confirmar."),
-        "read_verification_code": lambda *_args, **_kwargs: ask_code("two_factor", "Digite o código que o Instagram enviou por SMS, e-mail ou o código de backup."),
+        "getpass": reader,
+        "read_authenticator_code": lambda: reader.read("authenticator", "Digite os 6 dígitos do aplicativo autenticador e toque em Confirmar."),
+        "read_verification_code": lambda *_args, **_kwargs: reader.read("two_factor", "Digite o código que o Instagram enviou por SMS, e-mail ou o código de backup."),
     }
     previous = {name: getattr(core, name) for name in overrides}
     try:
@@ -114,6 +126,7 @@ def web_input(core):
             setattr(core, name, value)
         yield
     finally:
+        reader.initial_code = ""
         for name, value in previous.items():
             setattr(core, name, value)
 
@@ -121,7 +134,7 @@ def web_input(core):
 def run(payload):
     import instagram_login_apk as core
 
-    with web_input(core):
+    with web_input(core, payload.pop("verification_code", "")):
         _run(payload, core)
 
 
@@ -149,13 +162,11 @@ def _run(payload, core):
             client._local_login_username = settings.get("_local_login_username")
             # Como no CLI, aplicar estes ajustes somente após hidratar a sessão.
             client.read_timeout = 30
-            client.set_retry_config(session_retry_total=0, public_request_retries_count=0,
-                                    private_transport=core.PRIVATE_TRANSPORT)
+            client.set_retry_config(session_retry_total=0, public_request_retries_count=0)
         client.challenge_code_handler = core.read_verification_code
         # Match the CLI login flow: let the Instagram response determine whether
         # the same challenge is TOTP, SMS, email, or a backup code.
         client.two_factor_method = payload.get("two_factor_method", "auto")
-        client._ramos_proxy_enabled = bool(payload.get("proxy"))
         apply_instagram_proxy(client, payload.get("proxy", ""))
         handle = core.valid_username(payload["username"])
         owner = getattr(client, "_local_login_username", None)
@@ -248,10 +259,13 @@ def _run(payload, core):
                 message = ("O serviço de login não autorizou a solicitação. "
                            "Confira os avisos de segurança no aplicativo oficial do Instagram. "
                            "O painel não repetirá o login automaticamente.")
-                if trace and trace[-1].get("etapa") == "chave_criptografia_senha":
-                    message = ("O Instagram recusou a obtenção da chave de criptografia da senha, "
-                               "antes do envio das credenciais e do 2FA. "
-                               "Exporte o diagnóstico para conferir a resposta dessa chamada.")
+                try:
+                    response_data = client.last_response.json()
+                    provider_message = response_data.get("message", "") if isinstance(response_data, dict) else ""
+                    if isinstance(provider_message, str) and provider_message.casefold().startswith(("aguarde alguns minutos", "please wait a few minutes")):
+                        message = "O Instagram pediu para aguardar alguns minutos antes de tentar novamente. A tentativa parou antes da verificação 2FA."
+                except (ValueError, AttributeError):
+                    pass
                 if trace and trace[-1].get("http") == status:
                     category = core.safe_symbol(trace[-1].get("etapa"))
                     if category:
