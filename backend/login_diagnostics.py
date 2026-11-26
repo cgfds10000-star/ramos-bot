@@ -17,6 +17,13 @@ def runtime_diagnostic(client):
     private = getattr(client, 'private', None)
     transport = getattr(client, 'private_transport', None)
     public_transport = getattr(client, 'public_transport', None)
+    protocol = getattr(response, 'ramos_transport', {})
+    protocol = protocol if isinstance(protocol, dict) else {}
+    try:
+        if getattr(private.get_adapter('https://i.instagram.com/'), 'transport_name', None) == 'dart-http2':
+            transport = 'dart-http2'
+    except AttributeError:
+        pass
     packages = {}
     for name in ('requests', 'curl_cffi', 'urllib3', 'cryptography'):
         try:
@@ -39,8 +46,11 @@ def runtime_diagnostic(client):
     retry = headers.get('Retry-After')
     retry_seconds = int(retry) if isinstance(retry, str) and retry.isascii() and retry.isdigit() and len(retry) <= 8 else None
     return {
-        'diagnostico_servidor': 1,
-        'transporte_privado': transport if transport in ('curl', 'requests', 'utls') else 'indisponivel',
+        'diagnostico_servidor': 2,
+        'transporte_privado': transport if transport in ('curl', 'requests', 'utls', 'dart-http2') else 'indisponivel',
+        'http_version': protocol.get('http_version') if protocol.get('http_version') in ('2', '1.1') else None,
+        'alpn': protocol.get('alpn') if protocol.get('alpn') in ('h2', 'http/1.1') else None,
+        'tls_minima': '1.3' if protocol.get('tls_minima') == '1.3' else None,
         'transporte_publico': public_transport if public_transport in ('curl', 'requests') else 'indisponivel',
         'proxy_configurado': bool(getattr(private, 'proxies', {})),
         'proxy_ambiente_habilitado': bool(getattr(private, 'trust_env', False)),

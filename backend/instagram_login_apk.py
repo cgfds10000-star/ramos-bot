@@ -61,7 +61,7 @@ import unicodedata
 from urllib.parse import urlsplit
 
 CLIENT_VERSION = "3.2.19"
-REVISION = "caa-5-web-apk-2fa"
+REVISION = "caa-6-dart-http2"
 
 
 # ---------------------------------------------------------------------------
@@ -861,6 +861,7 @@ def load_client_class():
             return value
 
         def bloks_caa_login(self, *args, **kwargs):
+            self.registration_reused = bool(getattr(self, "usdid_registered", False))
             outcome = super().bloks_caa_login(*args, **kwargs)
             self.caa_last_outcome = outcome
             if (not outcome.get("logged_in") and not self.profile_session_completed
@@ -944,22 +945,39 @@ def load_client_class():
             try:
                 return super()._send_private_request(endpoint, *args, **kwargs)
             finally:
-                response = getattr(self, "last_response", None)
-                data = getattr(self, "last_json", None)
-                error = safe_symbol(data.get("error_type")) if isinstance(data, dict) else None
-                status = getattr(response, "status_code", None)
-                entry = {
-                    "etapa": category,
-                    "http": status if isinstance(status, int) and 100 <= status <= 599 else None,
-                    "erro": error,
-                    "segundos": round(time.monotonic() - started, 2),
-                }
-                if category in {"caa_login", "verificacao_entrada", "verificacao_tela_codigo", "verificacao_envio_codigo"}:
-                    try:
-                        entry["estrutura_bloks"] = bloks_shape_summary(self, data)
-                    except (ValueError, TypeError, RecursionError):
-                        entry["estrutura_indisponivel"] = True
-                self.login_trace.append(entry)
+                self._record_login_request(category, started)
+
+        def private_graphql_www_request(self, friendly_name, *args, **kwargs):
+            started = time.monotonic()
+            self.last_response = None
+            try:
+                return super().private_graphql_www_request(friendly_name, *args, **kwargs)
+            finally:
+                category = "registro_dispositivo" if friendly_name == "IGUSDIDRegistrationMutation" else "graphql"
+                self._record_login_request(category, started)
+
+        def _record_login_request(self, category, started):
+            response = getattr(self, "last_response", None)
+            data = getattr(self, "last_json", None)
+            error = safe_symbol(data.get("error_type")) if isinstance(data, dict) else None
+            status = getattr(response, "status_code", None)
+            entry = {
+                "etapa": category,
+                "http": status if isinstance(status, int) and 100 <= status <= 599 else None,
+                "erro": error,
+                "segundos": round(time.monotonic() - started, 2),
+            }
+            protocol = getattr(response, "ramos_transport", {})
+            if isinstance(protocol, dict):
+                for key, allowed in {"http_version": {"2"}, "alpn": {"h2"}, "tls_minima": {"1.3"}}.items():
+                    if isinstance(protocol.get(key), str) and protocol[key] in allowed:
+                        entry[key] = protocol[key]
+            if category in {"caa_login", "verificacao_entrada", "verificacao_tela_codigo", "verificacao_envio_codigo"}:
+                try:
+                    entry["estrutura_bloks"] = bloks_shape_summary(self, data)
+                except (ValueError, TypeError, RecursionError):
+                    entry["estrutura_indisponivel"] = True
+            self.login_trace.append(entry)
 
         def challenge_code_or_raised(self, choice, wait_seconds=5, attempts=24):
             # A implementacao original imprime o codigo. Aqui ele nao e registrado.
@@ -1107,6 +1125,8 @@ def safe_diagnostic(client, outcome, error=None):
         "excecao": safe_symbol(type(error).__name__) if error is not None else None,
         "sessao_recebida": bool(client.user_id and (client.authorization or client.sessionid)),
         "caa_iniciado": any(row.get("etapa") in {"caa_preparacao", "caa_login"} for row in trace),
+        "registro_dispositivo_reutilizado": bool(getattr(client, "registration_reused", False)),
+        "registro_dispositivo_confirmado": bool(getattr(client, "usdid_registered", False)),
         "motivo_caa": "autenticado" if caa_outcome.get("logged_in") else CAA_REASONS.get(reason, "indisponivel"),
         "leituras_alternativas_de_contexto": getattr(client, "contexts_recovered", 0),
         "aprovacao_outro_dispositivo": getattr(client, "device_approval_state", None),

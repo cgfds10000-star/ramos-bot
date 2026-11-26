@@ -11,6 +11,7 @@ import time
 from storage import read_json, write_json
 from network import apply_instagram_proxy
 from login_diagnostics import runtime_diagnostic
+from dart_http2 import configure_login_transport
 
 OUTPUT = sys.stdout
 
@@ -192,6 +193,7 @@ def _run(payload, core):
         # the same challenge is TOTP, SMS, email, or a backup code.
         client.two_factor_method = payload.get("two_factor_method", "auto")
         apply_instagram_proxy(client, payload.get("proxy", ""))
+        configure_login_transport(client)
         handle = core.valid_username(payload["username"])
         owner = getattr(client, "_local_login_username", None)
         if owner and owner.casefold() != handle.casefold():
@@ -316,6 +318,8 @@ def _run(payload, core):
                 core.save_private_json(directory / "diagnostic.json", diagnostic)
             except OSError:
                 emit("log", tone="error", message="Não foi possível salvar a sessão no servidor.")
+            with contextlib.suppress(Exception):
+                client.private.close()
 
 
 def main():

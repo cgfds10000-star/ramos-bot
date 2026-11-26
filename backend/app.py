@@ -1143,7 +1143,7 @@ class RamosHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             if urlsplit(self.path).path == "/api/health":
-                return self.reply(200, {"ok": True, "login_flow": "script-web-apk-2fa-v4",
+                return self.reply(200, {"ok": True, "login_flow": "script-web-dart-http2-v5",
                                         "revision": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "local")})
             path = urlsplit(self.path).path
             if path.startswith("/api/") or not os.environ.get("RAMOS_ADMIN_PASSWORD"):

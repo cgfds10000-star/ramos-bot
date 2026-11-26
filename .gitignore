@@ -9,6 +9,7 @@ __pycache__/
 *.sqlite*
 data/
 .venv/
+**/.dart_tool/
 *.zip
 *.tar.gz
 

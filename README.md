@@ -23,7 +23,26 @@ A primeira execução instala as dependências. O ZIP de entrega também inclui 
 - Macros iniciadas pelo usuário, interrupção e proxy. A atividade aparece na aba Logs; a tela de sessões não abre um terminal ou campo de comandos. O popup mantém login e 2FA.
 - Diagnóstico exportável sem senhas ou tokens. Escritas e códigos não são reenviados automaticamente.
 
-O núcleo usa o `instagram_login_apk.py` fornecido, com `instagrapi==3.2.19`. A revisão `caa-5-web-apk-2fa` corrige a continuação do 2FA em modo automático conforme o APK fornecido; o worker adapta `input` e `getpass` do terminal para o popup e respeita o método de autenticação selecionado no painel. Uma sessão só aparece como conectada depois de receber a confirmação autenticada do Instagram. Os testes usam processos e dados sintéticos; não houve login em uma conta real durante esta entrega. O login do site continua saindo pela conexão configurada no servidor; no APK, sai pelo aparelho.
+O núcleo usa o `instagram_login_apk.py` fornecido, com `instagrapi==3.2.19`. A revisão `caa-6-dart-http2` mantém a continuação do 2FA do APK e usa no Docker o transporte Dart da referência `flutter-caa-http2-5`, com `http2==3.2.0`, ALPN `h2` e TLS mínimo 1.3. O worker adapta `input` e `getpass` do terminal para o popup e respeita o método selecionado no painel. Uma sessão só aparece como conectada depois de receber a confirmação autenticada do Instagram. Os testes usam processos e dados sintéticos; não houve login em uma conta real durante esta entrega. O login do site continua saindo pela conexão configurada no servidor; no APK, sai pelo aparelho. Usar o mesmo código de transporte elimina essa diferença de implementação, sem garantir que o Instagram aceite a origem do servidor.
+
+### Transporte do app no backend
+
+O Docker compila `backend/dart_transport/bin/bridge.dart` em um executável nativo com Dart 3.14.0. O worker Python chama esse executável por pipes locais; não há servidor adicional nem porta pública. O código de conexão, enquadramento HTTP/2 e TLS foi copiado do ZIP de referência. A adaptação conserva os cookies no Python, com os escopos de domínio e caminho, e devolve corpo e múltiplos `Set-Cookie` sem duplicar a descompressão. Senha e código passam em memória pelos mesmos processos da tentativa, sem arquivos de credenciais.
+
+`RAMOS_DART_TRANSPORT=/app/bin/ramos-h2` é definido pelo Docker. Com essa opção, a conexão privada direta usa `dart-http2`, incluindo o registro do dispositivo. Falha, timeout, reset de stream, certificado inválido ou recusa de HTTP/2 encerram a chamada sem repetir a requisição nem trocar para curl. Um proxy explicitamente configurado continua usando o transporte curl existente, escolhido antes do envio. O desenvolvimento local sem essa variável continua usando curl.
+
+Para compilar e executar as regressões do transporte em um ambiente com Dart 3.14.0, Node.js e OpenSSL:
+
+```bash
+cd backend/dart_transport
+dart pub get --enforce-lockfile
+dart analyze
+dart compile exe bin/bridge.dart -o /tmp/ramos-h2
+cd ../..
+RAMOS_TEST_DART_TRANSPORT=/tmp/ramos-h2 .venv/bin/python -m unittest discover -s tests -v
+```
+
+Os testes executam o worker Python real e o executável Dart contra um provedor TLS/HTTP2 local, cobrindo as dez chamadas do login completo do app, senha criptografada e código 2FA enviado uma única vez. Também verificam gzip, cookies, reutilização da conexão, 401/429, redirecionamento, timeout, reset de stream, certificado inválido, recusa de HTTP/1.1 e preservação da configuração explícita de proxy. O executável foi compilado e executado localmente; o `docker build` não foi executado neste ambiente.
 
 ## Fila do Viralize em Macros
 
@@ -103,7 +122,7 @@ O andamento e a chave da API ficam em `executions.json`, protegido com a mesma c
 
 ## Verificar esta revisão do login
 
-`GET /api/health` identifica o fluxo `script-web-apk-2fa-v4` e o SHA implantado. Os testes cobrem o worker real com respostas externas simuladas, incluindo usuário/senha → desafio → chave Base32 agrupada → TOTP renovado no envio → sessão conectada, consumo único do desafio e ausência de segredos no disco/estado público. As regressões do APK verificam o identificador nativo em modo automático, troca de contexto entre telas, transição de AP para TOTP/nativo, backup, sessão recebida durante preparação e interrupção sem reenvio após timeout. Não é executado login real durante os testes.
+`GET /api/health` identifica o fluxo `script-web-dart-http2-v5` e o SHA implantado. O diagnóstico da conexão direta deve mostrar `revisao: caa-6-dart-http2`, `transporte_privado: dart-http2`, `http_version: 2`, `alpn: h2` e `tls_minima: 1.3` quando houver resposta HTTP. O registro do dispositivo agora aparece nas etapas quando executado; os indicadores de registro confirmado/reutilizado distinguem uma identidade nova de uma já registrada. Os testes cobrem o worker real com respostas externas simuladas, incluindo usuário/senha → desafio → chave Base32 agrupada → TOTP renovado no envio → sessão conectada, consumo único do desafio e ausência de segredos no disco/estado público. As regressões do APK verificam o identificador nativo em modo automático, troca de contexto entre telas, transição de AP para TOTP/nativo, backup, sessão recebida durante preparação e interrupção sem reenvio após timeout. Não é executado login real durante os testes.
 
 
 O diagnostico do servidor inclui o transporte privado/publico realmente usado, versoes de dependencias HTTP, presenca de proxy, classificacao da ultima rota e apenas indicadores booleanos da resposta de chave de senha. Mensagens do provedor sao classificadas em categorias fixas; URLs completas, cookies, tokens e valores de chaves nao sao exportados. Isso permite distinguir um 401 em `launcher/sync/` de uma falha no envio do codigo, sem presumir bloqueio de IP.
