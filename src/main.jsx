@@ -6,7 +6,7 @@ import MacrosPage from './MacrosPage.jsx';
 import LogsPage from './LogsPage.jsx';
 import ProxyPage from './ProxyPage.jsx';
 import {formatLogTime} from './logs.js';
-import {appMessage} from './mobile.js';
+import {appMessage, isNativeApp} from './mobile.js';
 import {createStateFeed, isStateSnapshot} from './state-sync.js';
 import './styles.css';
 import './reference.css';
@@ -180,7 +180,7 @@ function App() {
 
 
 
-  return <div className={`app-shell ${page === 'sessions' ? 'is-home' : `is-${page}`}`} onContextMenu={event => { if (!event.target.closest('input, textarea, select')) event.preventDefault(); }}>
+  return <div className={`app-shell ${isNativeApp() ? 'is-native-app ' : ''}${page === 'sessions' ? 'is-home' : `is-${page}`}`} onContextMenu={event => { if (!event.target.closest('input, textarea, select')) event.preventDefault(); }}>
     <header className="header" inert={Boolean(panel)}>
       <a className="brand" href="#" onClick={event => { event.preventDefault(); setPanel(null); setPage('sessions'); }} aria-label="Ramos Bot, início"><span className="brand-mark"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M5 5h24c20 0 20 26 3 26l14 14H32L14 26h14c9 0 9-11 0-11H15z" fill="currentColor"/><path d="M6 15l10 10v20H6z" fill="#00c8ed"/></svg></span><span>RAMOS <strong>BOT</strong></span></a>
     </header>

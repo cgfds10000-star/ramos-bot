@@ -11,6 +11,11 @@ body:has(#root > .app-shell) #root{height:100dvh;overflow:hidden}
   overflow:hidden;
   padding:env(safe-area-inset-top) 0 0 !important;
 }
+/* The native app already places its WebView inside Flutter's SafeArea. */
+#root > .app-shell.is-native-app{
+  padding-top:0 !important;
+}
+#root > .app-shell.is-native-app > .header::before{display:none}
 #root > .app-shell::after{display:none}
 #root > .app-shell > .header{grid-row:1;min-width:0;z-index:20}
 #root > .app-shell > main{

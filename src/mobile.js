@@ -1,8 +1,12 @@
 const sessionIdPattern = /^[a-f0-9-]{36}$/i;
 
+export function isNativeApp(bridge = globalThis.RamosApp) {
+  return typeof bridge?.postMessage === 'function';
+}
+
 export function appMessage(message) {
   const bridge = globalThis.RamosApp;
-  if (typeof bridge?.postMessage !== 'function') return false;
+  if (!isNativeApp(bridge)) return false;
   bridge.postMessage(JSON.stringify(message));
   return true;
 }
