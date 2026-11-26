@@ -106,7 +106,11 @@ class BackendApi {
       if (cookie.isNotEmpty)
         request.headers.set(HttpHeaders.cookieHeader, cookie);
       if (csrf.isNotEmpty) request.headers.set('X-Ramos-CSRF', csrf);
-      if (body != null) request.write(jsonEncode(body));
+      if (body != null) {
+        final bytes = utf8.encode(jsonEncode(body));
+        request.contentLength = bytes.length;
+        request.add(bytes);
+      }
       final response = await request.close().timeout(
         const Duration(seconds: 45),
       );

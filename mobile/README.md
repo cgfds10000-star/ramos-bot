@@ -4,7 +4,7 @@ Aplicativo Android Flutter baseado no ZIP de login fornecido. O fundo texturizad
 
 ## Fluxo
 
-1. Entre com a mesma senha de acesso ao painel. O servidor padrão é `https://ramos-bot-production.up.railway.app`.
+1. O aplicativo abre diretamente o site. O acesso ao painel é feito na própria página e compartilhado com o FAB, sem uma tela de senha adicional do Flutter. O servidor é `https://ramos-bot-production.up.railway.app`.
 2. O site abre dentro do aplicativo, com os mesmos ícones, sessões, macros, proxy, logs e configurações.
 3. Toque no FAB de contas para adicionar um login. Escolha uma sessão existente ou crie outra.
 4. Usuário, senha, 2FA e eventuais aprovações são processados diretamente no celular pelo código do ZIP. A senha e a chave 2FA não são enviadas ao backend Ramos Bot.
@@ -27,7 +27,7 @@ flutter test
 flutter build apk --debug --target-platform android-arm64
 ```
 
-O APK de teste assinado fica em `build/app/outputs/flutter-apk/app-debug.apk`. O identificador continua `com.ramos.app.login`, a versão é `1.1.0+5` e o nome exibido é RAMOS BOT. O projeto não inclui senhas do painel, credenciais do Instagram, chaves de API ou chaves de assinatura de produção.
+O APK de teste assinado fica em `build/app/outputs/flutter-apk/app-debug.apk`. O identificador continua `com.ramos.app.login`, a versão é `1.1.0+6` e o nome exibido é RAMOS BOT. O projeto não inclui senhas do painel, credenciais do Instagram, chaves de API ou chaves de assinatura de produção.
 
 O repositório também contém a rotina `Android app` no GitHub Actions para compilar e disponibilizar o APK no artefato `RamosBot-Android`.
 

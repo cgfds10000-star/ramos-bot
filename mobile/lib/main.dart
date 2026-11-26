@@ -30,12 +30,10 @@ class RamosShell extends StatefulWidget {
 
 class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
   final vault = SecureVault();
-  final panelPassword = TextEditingController(),
-      server = TextEditingController();
   BackendApi? api;
   WebViewController? web;
   Map<String, dynamic> state = {};
-  bool loading = true, locked = false, busy = false, popup = false;
+  bool loading = true, locked = false, popup = false;
   int progress = 0;
   String error = '', pageError = '';
   String? pendingSession;
@@ -55,11 +53,11 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
     try {
       await vault.load();
       api = BackendApi(vault);
-      server.text = api!.base;
+      await api!.setBase('https://ramos-bot-production.up.railway.app');
       final link = await native.invokeMethod<String>('initialLink');
       if (link != null)
         pendingSession = Uri.tryParse(link)?.queryParameters['session_id'];
-      await refresh();
+      await openSite();
     } catch (_) {
       if (mounted)
         setState(() {
@@ -70,21 +68,22 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> refresh() async {
-    if (api == null) return;
+  Future<bool> refresh() async {
+    if (api == null || web == null) return false;
     try {
+      await syncPanelCookie();
       state = await api!.get('/state');
-      if (!mounted) return;
+      if (!mounted) return false;
       setState(() {
         locked = false;
         loading = false;
         error = '';
       });
-      if (web == null) await openSite();
       await publishState();
       final id = pendingSession;
       pendingSession = null;
       if (id != null && mounted) await login(id);
+      return true;
     } on BackendFailure catch (failure) {
       if (mounted)
         setState(() {
@@ -92,41 +91,42 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
           loading = false;
           error = failure.locked ? '' : failure.message;
         });
+      return false;
+    } on PlatformException {
+      if (mounted)
+        setState(
+          () => error = 'Não foi possível sincronizar o acesso do site.',
+        );
+      return false;
     }
   }
 
-  Future<void> panelLogin() async {
-    if (busy || api == null) return;
-    setState(() {
-      busy = true;
-      error = '';
-    });
-    final pass = panelPassword.text;
-    panelPassword.clear();
-    try {
-      final old = api!.base;
-      await api!.setBase(server.text);
-      if (old != api!.base) web = null;
-      await api!.post('/access/login', {'password': pass});
-      await native.invokeMethod<void>('setPanelCookie', {
-        'url': api!.base,
-        'cookie': api!.cookie,
-      });
-      await refresh();
-      await web?.reload();
-    } on BackendFailure catch (failure) {
-      if (mounted) setState(() => error = failure.message);
-    } finally {
-      if (mounted) setState(() => busy = false);
+  Future<void> syncPanelCookie() async {
+    if (api == null) return;
+    final cookies = await WebViewCookieManager().getCookies(
+      domain: Uri.parse(api!.base),
+    );
+    final access = cookies
+        .where((item) => item.name == 'ramos_access')
+        .firstOrNull;
+    final value = access == null ? '' : '${access.name}=${access.value}';
+    if (value != api!.cookie) {
+      api!.cookie = value;
+      api!.csrf = '';
+      await vault.put('backend', {'base': api!.base, 'cookie': value});
     }
   }
 
   Future<void> openSite() async {
     final address = Uri.parse(api!.base);
-    await native.invokeMethod<void>('setPanelCookie', {
-      'url': api!.base,
-      'cookie': api!.cookie,
-    });
+    final prior = await WebViewCookieManager().getCookies(domain: address);
+    if (!prior.any((item) => item.name == 'ramos_access') &&
+        api!.cookie.isNotEmpty) {
+      await native.invokeMethod<void>('setPanelCookie', {
+        'url': api!.base,
+        'cookie': api!.cookie,
+      });
+    }
     final controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(ink)
@@ -177,7 +177,9 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
           onPageStarted: (_) {
             if (mounted) setState(() => pageError = '');
           },
-          onPageFinished: (_) => publishState(),
+          onPageFinished: (_) async {
+            await refresh();
+          },
           onWebResourceError: (failure) {
             if (failure.isForMainFrame == true && mounted)
               setState(
@@ -188,7 +190,11 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
         ),
       );
     web = controller;
-    if (mounted) setState(() {});
+    if (mounted)
+      setState(() {
+        loading = false;
+        error = '';
+      });
     await controller.loadRequest(address);
   }
 
@@ -206,7 +212,7 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
   }
 
   Future<void> publishState({String? sessionId}) async {
-    if (!mounted || web == null) return;
+    if (!mounted || web == null || locked || state['sessions'] is! List) return;
     try {
       await web!.runJavaScript(
         'window.dispatchEvent(new CustomEvent("ramos:state", {detail: ${jsonEncode({'state': state, if (sessionId != null) 'session_id': sessionId})}}));',
@@ -266,8 +272,16 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
 
   Future<void> accounts() async {
     if (popup || api == null) return;
-    await refresh();
-    if (!mounted || locked) return;
+    final ready = await refresh();
+    if (!mounted) return;
+    if (!ready) {
+      notice(
+        locked
+            ? 'Entre no painel pelo site aberto para gerenciar suas contas.'
+            : error,
+      );
+      return;
+    }
     popup = true;
     final result = await showModalBottomSheet<String>(
       context: context,
@@ -345,8 +359,6 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     native.setMethodCallHandler(null);
     api?.close();
-    panelPassword.dispose();
-    server.dispose();
     super.dispose();
   }
 
@@ -366,79 +378,21 @@ class _RamosShellState extends State<RamosShell> with WidgetsBindingObserver {
           child: Center(child: CircularProgressIndicator(color: purple)),
         ),
       );
-    if (locked || web == null)
+    if (web == null)
       return Scaffold(
         body: RamosTexture(
-          child: SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(28),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 440),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Center(child: RamosBrand()),
-                      const SizedBox(height: 48),
-                      const Icon(Icons.fingerprint, color: purple, size: 55),
-                      const SizedBox(height: 24),
-                      const Text(
-                        'Seu espaço de trabalho.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 30,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      const Text(
-                        'Entre no painel para gerenciar suas contas.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: muted, height: 1.5),
-                      ),
-                      const SizedBox(height: 30),
-                      TextField(
-                        controller: panelPassword,
-                        obscureText: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Senha do painel',
-                          prefixIcon: Icon(Icons.lock_outline),
-                        ),
-                        onSubmitted: (_) => panelLogin(),
-                      ),
-                      const SizedBox(height: 18),
-                      GlowButton(
-                        'Entrar no painel',
-                        icon: Icons.login,
-                        busy: busy,
-                        onPressed: panelLogin,
-                      ),
-                      if (error.isNotEmpty) MessageBox(error, error: true),
-                      if (!locked && error.isNotEmpty)
-                        TextButton(
-                          onPressed: refresh,
-                          child: const Text('Tentar novamente'),
-                        ),
-                      const SizedBox(height: 22),
-                      ExpansionTile(
-                        title: const Text(
-                          'Servidor',
-                          style: TextStyle(color: muted, fontSize: 13),
-                        ),
-                        children: [
-                          TextField(
-                            controller: server,
-                            keyboardType: TextInputType.url,
-                            autocorrect: false,
-                            decoration: const InputDecoration(
-                              labelText: 'Endereço HTTPS',
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  MessageBox(error, error: true),
+                  TextButton(
+                    onPressed: boot,
+                    child: const Text('Tentar novamente'),
                   ),
-                ),
+                ],
               ),
             ),
           ),
