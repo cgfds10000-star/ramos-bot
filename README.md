@@ -1,6 +1,6 @@
 # Ramos Bot · Mobile
 
-Painel React com o visual roxo neon da referência e backend Python real. O login do Instagram e o código de verificação são informados na própria página.
+Painel React com backend Python e aplicativo Android Flutter. O site é exibido dentro do aplicativo sem barra de navegador; o FAB de contas no canto inferior direito abre o gerenciador e o login nativo do celular. Veja `mobile/README.md` para compilar.
 
 ## Testar no Windows
 
@@ -14,11 +14,11 @@ A primeira execução instala as dependências. O ZIP de entrega também inclui 
 ## Fluxo do Instagram
 
 - Criar, selecionar, pesquisar e remover sessões. O login abre em um popup com abas que podem ser deslizadas horizontalmente, arrastadas com o mouse ou selecionadas pelas setas do teclado.
-- Conectar com usuário/senha, importar um `login.txt` escolhido por você ou reutilizar uma sessão salva.
-- Quando o Instagram solicita 2FA no login, o popup pede o código e segue a mesma continuação automática do script Python, usando o contexto da mesma tentativa. O Instagram determina se é autenticador, SMS/e-mail ou código de backup. O código é informado na página e enviado uma única vez; a senha não é reenviada.
-- A tela inicial pede usuário e senha. O campo de 2FA aparece quando a mesma tentativa de login solicita verificação. O núcleo Python acompanha as continuações do APK de referência: contexto Bloks, identificador nativo do autenticador e transição de AP para 2FA. Cada tela usa o contexto atualizado pela resposta anterior; clientes antigos da API ainda podem fornecer `verification_code` numérico opcional.
-- O popup 2FA tem um campo único: digite o código ou cole a chave Base32 com espaços e toque em **Confirmar**. O site mostra uma prévia do TOTP. Ao confirmar uma chave, ela é entregue por HTTPS ao worker da mesma tentativa, que usa a lógica do script para gerar o código no instante do envio ao Instagram, depois das telas de preparação. Chave, código e senha não são gravados em disco nem aparecem no estado público ou nos logs. Não há envio automático durante a digitação nem repetição após falha. SMS/e-mail continuam aceitando somente o código recebido; backup aceita oito dígitos.
-- A opção de aprovação por outro aparelho foi removida. Quando o servidor não fornece um contexto de código compatível, a tentativa é encerrada e seu diagnóstico pode ser exportado. Isso não contorna verificações obrigatórias do Instagram.
+- Conectar pelo aplicativo Android com usuário/senha e 2FA locais, ou reutilizar um login salvo. O site envia somente o ID da sessão à ponte nativa; não recebe a senha do Instagram.
+- Quando o Instagram solicita 2FA, o popup nativo do aplicativo continua a mesma tentativa do ZIP de referência. O servidor recebe apenas a sessão autenticada e valida a conta antes de conectá-la ao painel.
+- O endpoint protegido `POST /api/sessions/ID/import` recebe o pacote de sessão do aplicativo. Os IDs das sessões e os dados do volume são preservados. Clientes legados da API continuam disponíveis, mas a interface do site encaminha novos logins ao aplicativo.
+- O popup nativo possui um campo único para o código 2FA ou a chave Base32, conforme o método solicitado pelo Instagram. A conversão TOTP ocorre no celular, no instante do envio; senha, chave 2FA e código não são transferidos ao backend. O backend recebe apenas a sessão confirmada.
+- Aprovações em outro aparelho seguem a lógica original do ZIP e são verificadas pelo aplicativo sem repetir automaticamente senha ou código.
 - `buscar "nome" --limite 10`, `buscar "nome" --geral`, `perfil usuario`, `perfil --id 123456`, `seguir usuario`, `seguir --id 123456`, `curtir URL_OU_ID`.
 - Macros iniciadas pelo usuário, interrupção e proxy. A atividade aparece na aba Logs; a tela de sessões não abre um terminal ou campo de comandos. O popup mantém login e 2FA.
 - Diagnóstico exportável sem senhas ou tokens. Escritas e códigos não são reenviados automaticamente.
@@ -43,6 +43,14 @@ RAMOS_TEST_DART_TRANSPORT=/tmp/ramos-h2 .venv/bin/python -m unittest discover -s
 ```
 
 Os testes executam o worker Python real e o executável Dart contra um provedor TLS/HTTP2 local, cobrindo as dez chamadas do login completo do app, senha criptografada e código 2FA enviado uma única vez. Também verificam gzip, cookies, reutilização da conexão, 401/429, redirecionamento, timeout, reset de stream, certificado inválido, recusa de HTTP/1.1 e preservação da configuração explícita de proxy. O executável foi compilado e executado localmente; o `docker build` não foi executado neste ambiente.
+
+## Aplicativo Android e login no celular
+
+O projeto completo fica em `mobile/`. O aplicativo abre o site e mantém seus ícones e funcionalidades. O FAB circular no canto inferior direito abre contas, logins salvos, remoção e autenticação nativa. Senha e 2FA ficam no fluxo local do ZIP. Somente a sessão autenticada é transferida por HTTPS para o backend existente, que confirma o ID da conta com uma leitura autenticada antes de salvar.
+
+A fila, as macros e a execução contínua continuam no Python. Fechar o aplicativo não aciona `/stop` nem `/disconnect`. Reabrir consulta o mesmo estado do servidor. Um servidor que recuse a sessão transferida não é marcado como conectado; o aplicativo mantém o login local e oferece nova sincronização.
+
+O estado expõe `mobile_handoff_version: 1`. A rotina `Android app` no GitHub Actions compila o APK de teste. O cookie de acesso ao painel é compartilhado com a WebView pelo Android CookieManager com Secure/HttpOnly, sem tokens na URL. O aplicativo mantém a origem HTTPS configurada e não oferece uma ponte para páginas externas.
 
 ## Fila do Viralize em Macros
 

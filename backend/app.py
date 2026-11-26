@@ -27,6 +27,7 @@ from urllib.request import Request
 import uuid
 from storage import read_json as storage_read, write_json
 from network import OutboundOpener, check_proxy_ip, normalize_proxy, proxy_fields_url
+from mobile_session import normalize_mobile_session, validate_mobile_session, MobileSessionError
 
 ROOT = Path(__file__).resolve().parent.parent
 USERNAME = re.compile(r"[A-Za-z0-9_.]{1,30}")
@@ -222,7 +223,7 @@ def viralize_step(task):
 
 
 class RamosService:
-    def __init__(self, directory=None, worker_command=None, dependency_check=None, viralize_api=ViralizeApi, proxy_checker=check_proxy_ip):
+    def __init__(self, directory=None, worker_command=None, dependency_check=None, viralize_api=ViralizeApi, proxy_checker=check_proxy_ip, mobile_validator=validate_mobile_session):
         self.directory = Path(directory or os.environ.get("RAMOS_DATA_DIR", ROOT / "data")).resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
@@ -230,6 +231,9 @@ class RamosService:
         self.worker_command = worker_command or [sys.executable, "-u", str(ROOT / "backend" / "worker.py")]
         self.dependency_check = dependency_check or (lambda: importlib.util.find_spec("instagrapi") is not None)
         self.jobs = {}
+        self.mobile_imports = set()
+        self.mobile_import_sessions = set()
+        self.mobile_validator = mobile_validator
         self.viralize_api = viralize_api
         self.proxy_checker = proxy_checker
         self.proxy_check_running = False
@@ -447,10 +451,13 @@ class RamosService:
             data["csrf"] = self.csrf
             data["engine_ready"] = bool(self.dependency_check())
             data["server_time_ms"] = int(time.time() * 1000)
+            data['mobile_handoff_version'] = 1
             return data
 
     def start(self, session_id, payload, viralize_run=None):
         with self.lock:
+            if session_id in self.mobile_import_sessions:
+                raise ApiError('Aguarde a sincronização do login do aplicativo.', 409)
             session = self.session(session_id)
             run = self.viralize_runs.get(session_id)
             if run and run["status"] in ACTIVE_RUNS and run is not viralize_run:
@@ -486,6 +493,8 @@ class RamosService:
                 raise ApiError("Operação inválida.")
             if any(job["account_id"] == account["id"] for job in self.jobs.values()):
                 raise ApiError("Essa conta já está ocupada em outra sessão.", 409)
+            if account['id'] in self.mobile_imports:
+                raise ApiError('Essa conta está recebendo uma sessão do aplicativo.', 409)
             if mode == "login" and any(item["id"] != session_id and item.get("account_id") == account["id"] and item.get("authenticated") for item in self.data["sessions"]):
                 raise ApiError("Essa conta já está conectada em outra sessão.", 409)
             previous = dict(session)
@@ -921,7 +930,55 @@ class RamosService:
                 if self.run_threads.get(session_id) is threading.current_thread():
                     self.run_threads.pop(session_id, None)
 
+    def import_mobile_session(self, session_id, body):
+        try:
+            data = normalize_mobile_session(body)
+        except MobileSessionError as error:
+            raise ApiError(str(error)) from None
+        with self.lock:
+            session = self.session(session_id)
+            account = self.add_account(data['username'])
+            if not self.dependency_check():
+                raise ApiError('O módulo de Instagram ainda não está disponível no servidor.', 503)
+            run = self.viralize_runs.get(session_id)
+            if session_id in self.jobs or session_id in self.mobile_import_sessions or account['id'] in self.mobile_imports or (run and run['status'] in ACTIVE_RUNS):
+                raise ApiError('Encerre a operação desta sessão antes de reconectar.', 409)
+            if any(job['account_id'] == account['id'] for job in self.jobs.values()) or any(s['id'] != session_id and s.get('account_id') == account['id'] and s.get('authenticated') for s in self.data['sessions']):
+                raise ApiError('Essa conta já está ocupada em outra sessão.', 409)
+            previous_account = session.get('account_id')
+            proxy = self.data.get('proxy', '')
+            self.mobile_imports.add(account['id'])
+            self.mobile_import_sessions.add(session_id)
+        try:
+            try:
+                settings = self.mobile_validator(data, proxy)
+            except Exception:
+                raise ApiError('O servidor não conseguiu validar a sessão recebida do celular. O login não será repetido. Confira a conexão e tente sincronizar novamente.', 409) from None
+            with self.lock:
+                session = self.session(session_id)
+                self.account(account['id'])
+                if session.get('account_id') != previous_account or session_id in self.jobs or self.data.get('proxy', '') != proxy:
+                    raise ApiError('A sessão foi alterada durante a sincronização. Tente novamente.', 409)
+                private_json(self.directory / 'accounts' / account['id'] / 'session.json', settings)
+                private_json(self.directory / 'accounts' / account['id'] / 'diagnostic.json', {
+                    'revisao': 'mobile-session-handoff-v1', 'resultado': 'autenticado',
+                    'sessao_recebida': True, 'login_no_celular': True,
+                    'senha_recebida': False, 'codigo_2fa_recebido': False,
+                    'validacao_servidor': 'confirmada',
+                })
+                session.update(account_id=account['id'], authenticated=True, status='connected', challenge=None)
+                account['last_connected'] = time.strftime('%Y-%m-%dT%H:%M:%S')
+                self.save()
+                self.log(session_id, 'success', 'Login realizado no celular. Sessão validada e conectada ao servidor.')
+                return {'ok': True, 'session_id': session_id, 'execution_mode': 'server'}
+        finally:
+            with self.lock:
+                self.mobile_imports.discard(account['id'])
+                self.mobile_import_sessions.discard(session_id)
+
     def mutate(self, method, route, body):
+        if method == 'POST' and len(route) == 3 and route[0] == 'sessions' and route[2] == 'import':
+            return self.import_mobile_session(route[1], body)
         if route == ['viralize', 'start'] and method == 'POST':
             return self.start_viralize_batch(body)
         if route == ['proxy', 'test'] and method == 'POST':
@@ -942,6 +999,8 @@ class RamosService:
                 return {"ok": True, "session_id": item["id"]}
             if len(route) >= 2 and route[0] == "sessions":
                 session_id = route[1]
+                if session_id in self.mobile_import_sessions:
+                    raise ApiError('Aguarde a sincronização do login do aplicativo.', 409)
                 self.session(session_id)
                 if len(route) == 2 and method == "DELETE":
                     self.cancel(session_id, disconnect=True)
@@ -970,6 +1029,8 @@ class RamosService:
                 return {"ok": True, "account_id": account["id"]}
             elif len(route) == 2 and route[0] == "accounts" and method == "DELETE":
                 account = self.account(route[1])
+                if account['id'] in self.mobile_imports:
+                    raise ApiError('Aguarde a sincronização desta conta.', 409)
                 if any(job["account_id"] == account["id"] for job in self.jobs.values()):
                     raise ApiError("Encerre as operações desta conta antes de removê-la.", 409)
                 for session in self.data["sessions"]:
@@ -980,7 +1041,7 @@ class RamosService:
                 session_file = self.directory / "accounts" / account["id"] / "session.json"
                 session_file.unlink(missing_ok=True)
             elif route == ["proxy"] and method == "POST":
-                if self.jobs or any(run['status'] in ACTIVE_RUNS for run in self.viralize_runs.values()):
+                if self.jobs or self.mobile_imports or any(run['status'] in ACTIVE_RUNS for run in self.viralize_runs.values()):
                     raise ApiError("Aguarde ou encerre as operações antes de alterar o proxy.", 409)
                 value = str(body.get("url", "")).strip()
                 if body.get('enabled') and 'fields' in body:

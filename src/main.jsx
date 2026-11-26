@@ -9,6 +9,7 @@ import ProxyPage from './ProxyPage.jsx';
 import SessionTabs from './SessionTabs.jsx';
 import SessionLoginDialog from './SessionLoginDialog.jsx';
 import {formatLogTime} from './logs.js';
+import {appMessage, requestMobileLogin} from './mobile.js';
 import './styles.css';
 import './reference.css';
 import './macros.css';
@@ -74,8 +75,13 @@ function App() {
     refresh(true);
     const timer = setInterval(() => { if (!document.hidden) refresh(); }, 1500);
     const resume = () => { if (!document.hidden) refresh(); };
+    const mobileConnected = event => {
+      if (event.detail?.session_id) setSelected(event.detail.session_id);
+      setWorkspaceOpen(false); setPanel(null); refresh();
+    };
     document.addEventListener('visibilitychange', resume);
-    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', resume); };
+    window.addEventListener('ramos:session', mobileConnected);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', resume); window.removeEventListener('ramos:session', mobileConnected); };
   }, []);
 
   useEffect(() => {
@@ -115,9 +121,8 @@ function App() {
   async function connect(event) {
     event?.preventDefault();
     if (!session || !online || busy) return;
-    const suppliedPassword = password;
-    setPassword(''); setVisiblePassword(false);
-    await act(() => api.post(`/sessions/${session.id}/login`, { username: handle, password: suppliedPassword }));
+    const link = requestMobileLogin(session.id);
+    if (link) window.location.assign(link);
   }
 
   async function clearLogs() {
@@ -126,7 +131,9 @@ function App() {
 
   function exportLogs(entries) {
     const logs = Array.isArray(entries) ? entries : sessionLogs;
-    const blob = new Blob([logs.map(item => `[${formatLogTime(item)}] ${item.message}`).join('\n')], { type: 'text/plain;charset=utf-8' });
+    const text = logs.map(item => `[${formatLogTime(item)}] ${item.message}`).join('\n');
+    if (appMessage({action:'export', name:'ramos-bot-logs.txt', text})) return;
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a'); link.href = url; link.download = 'ramos-bot-logs.txt'; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -168,6 +175,7 @@ function App() {
   }
 
   function downloadJson(value, name) {
+    if (appMessage({action:'export', name, text:JSON.stringify(value, null, 2)})) return;
     const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], {type:'application/json'}));
     const link = document.createElement('a'); link.href = url; link.download = name; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -242,10 +250,9 @@ function App() {
           {!online && !checking && <div className="offline-note"><Radio size={19}/><div><strong>Servidor offline</strong><p>Verifique a conexão para entrar na sua conta.</p></div></div>}
           {session && !session.authenticated && !busy && <form className="login-form" onSubmit={connect}>
             <h1>Login</h1>
-            <label className="saved-account"><span>Conta salva:</span><select aria-label="Escolher conta salva" value={state.accounts.some(item => item.username === handle) ? handle : ''} onChange={event => { setHandle(event.target.value); setPassword(''); }}><option value="">Nova conta</option>{state.accounts.map(item => <option value={item.username} key={item.id}>@{item.username}</option>)}</select></label>
-            <label className="login-field"><UserRound aria-hidden="true"/><input id="instagram-user" autoComplete="username" placeholder="seu_usuario" aria-label="Usuário do Instagram" value={handle} onChange={event => setHandle(event.target.value)} maxLength={30} required autoCapitalize="none" spellCheck="false"/></label>
-            <label className="login-field"><LockKeyhole aria-hidden="true"/><input type={visiblePassword ? 'text' : 'password'} autoComplete="current-password" aria-label="Senha do Instagram" placeholder={state.accounts.some(item => item.username === handle && item.has_session) ? 'Sessão salva · senha opcional' : 'Sua senha'} value={password} onChange={event => setPassword(event.target.value)} maxLength={1000}/><IconButton label={visiblePassword ? 'Ocultar senha' : 'Mostrar senha'} onClick={() => setVisiblePassword(value => !value)}>{visiblePassword ? <EyeOff size={18}/> : <Eye size={18}/>}</IconButton></label>
-            <button className="connect-button" disabled={!online || pending || !handle.trim()}>{pending ? <LoaderCircle size={18} className="spin"/> : 'Login'}</button>
+            <ShieldCheck size={36}/>
+            <p className="panel-intro">Faça o login e a verificação 2FA no aplicativo Ramos Bot. No aplicativo, toque na bolinha de contas no canto inferior direito.</p>
+            <button className="connect-button" disabled={!online || pending}><UserRound size={19}/>Entrar pelo aplicativo</button>
           </form>}
           {busy && !session?.challenge && <div className="session-progress" role="status"><LoaderCircle className="spin" size={30}/><h1>{session.status === 'connecting' ? 'Conectando sua conta' : 'Sessão em atividade'}</h1><p>Acompanhe os detalhes na aba Logs.</p><button type="button" onClick={() => openPanel('logs')}><List size={17}/>Ver logs</button></div>}
           {session?.authenticated && !busy && <div className="session-connected"><ShieldCheck size={40}/><h1>@{account?.username}</h1><p>Conta conectada</p><div><button onClick={() => openPanel('logs')}><List size={17}/>Ver logs</button><button onClick={() => openPanel('macros')}><Bot size={17}/>Macros</button></div></div>}
